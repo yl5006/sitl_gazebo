@@ -590,12 +590,13 @@ void GazeboMavlinkInterface::send_mavlink_message(const uint8_t msgid, const voi
 
   /* header */
   buf[0] = MAVLINK_STX;
-  buf[1] = payload_len;
+  buf[1] = MAVLINK_STX1;
+  buf[2] = payload_len;
   /* no idea which numbers should be here*/
-  buf[2] = 100;
-  buf[3] = 0;
-  buf[4] = component_ID;
-  buf[5] = msgid;
+  buf[3] = 100;
+  buf[4] = 0;
+  buf[5] = component_ID;
+  buf[6] = msgid;
 
   /* payload */
   memcpy(&buf[MAVLINK_NUM_HEADER_BYTES],msg, payload_len);
@@ -603,7 +604,7 @@ void GazeboMavlinkInterface::send_mavlink_message(const uint8_t msgid, const voi
   /* checksum */
   uint16_t checksum;
   crc_init(&checksum);
-  crc_accumulate_buffer(&checksum, (const char *) &buf[1], MAVLINK_CORE_HEADER_LEN + payload_len);
+  crc_accumulate_buffer(&checksum, (const char *) &buf[2], MAVLINK_CORE_HEADER_LEN + payload_len);
   crc_accumulate(mavlink_message_crcs[msgid], &checksum);
 
   buf[MAVLINK_NUM_HEADER_BYTES + payload_len] = (uint8_t)(checksum & 0xFF);

@@ -21,7 +21,7 @@
 #endif
 
 #define MAVLINK_CORE_HEADER_LEN 5 ///< Length of core header (of the comm. layer): message length (1 byte) + message sequence (1 byte) + message system id (1 byte) + message component id (1 byte) + message type id (1 byte)
-#define MAVLINK_NUM_HEADER_BYTES (MAVLINK_CORE_HEADER_LEN + 1) ///< Length of all header bytes, including core and checksum
+#define MAVLINK_NUM_HEADER_BYTES (MAVLINK_CORE_HEADER_LEN + 2) //1 to 2/< Length of all header bytes, including core and checksum
 #define MAVLINK_NUM_CHECKSUM_BYTES 2
 #define MAVLINK_NUM_NON_PAYLOAD_BYTES (MAVLINK_NUM_HEADER_BYTES + MAVLINK_NUM_CHECKSUM_BYTES)
 
@@ -115,6 +115,7 @@ MAVPACKED(
 typedef struct __mavlink_message {
 	uint16_t checksum; ///< sent at end of packet
 	uint8_t magic;   ///< protocol magic marker
+        uint8_t magic1;   ///< protocol magic marker
 	uint8_t len;     ///< Length of payload
 	uint8_t seq;     ///< Sequence of packet
 	uint8_t sysid;   ///< ID of message sender system/aircraft
@@ -194,6 +195,7 @@ typedef enum {
     MAVLINK_PARSE_STATE_UNINIT=0,
     MAVLINK_PARSE_STATE_IDLE,
     MAVLINK_PARSE_STATE_GOT_STX,
+    MAVLINK_PARSE_STATE_GOT_STX1,
     MAVLINK_PARSE_STATE_GOT_SEQ,
     MAVLINK_PARSE_STATE_GOT_LENGTH,
     MAVLINK_PARSE_STATE_GOT_SYSID,

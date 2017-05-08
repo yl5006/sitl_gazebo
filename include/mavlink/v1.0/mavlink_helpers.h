@@ -10,6 +10,10 @@
 #define MAVLINK_HELPER
 #endif
 
+#ifndef MAVLINK_STX1
+#define MAVLINK_STX1 125
+#endif
+
 /*
  * Internal function to give access to the channel status for each channel
  */
@@ -76,13 +80,15 @@ MAVLINK_HELPER uint16_t mavlink_finalize_message_chan(mavlink_message_t* msg, ui
 	(void)min_length;
 	// This code part is the same for all messages;
 	msg->magic = MAVLINK_STX;
+        msg->magic1 = MAVLINK_STX1;
 	msg->len = length;
 	msg->sysid = system_id;
 	msg->compid = component_id;
 	// One sequence number per channel
 	msg->seq = mavlink_get_channel_status(chan)->current_tx_seq;
 	mavlink_get_channel_status(chan)->current_tx_seq = mavlink_get_channel_status(chan)->current_tx_seq+1;
-	msg->checksum = crc_calculate(((const uint8_t*)(msg)) + 3, MAVLINK_CORE_HEADER_LEN);
+//      msg->checksum = crc_calculate(((const uint8_t*)(msg)) + 3, MAVLINK_CORE_HEADER_LEN);
+        msg->checksum = crc_calculate(((const uint8_t*)(msg)) + 4, MAVLINK_CORE_HEADER_LEN);
 	crc_accumulate_buffer(&msg->checksum, _MAV_PAYLOAD(msg), msg->len);
 #if MAVLINK_CRC_EXTRA
 	crc_accumulate(crc_extra, &msg->checksum);
@@ -129,13 +135,14 @@ MAVLINK_HELPER void _mav_finalize_message_chan_send(mavlink_channel_t chan, uint
 	uint8_t ck[2];
 	mavlink_status_t *status = mavlink_get_channel_status(chan);
 	buf[0] = MAVLINK_STX;
-	buf[1] = length;
-	buf[2] = status->current_tx_seq;
-	buf[3] = mavlink_system.sysid;
-	buf[4] = mavlink_system.compid;
-	buf[5] = msgid;
+        buf[1] = MAVLINK_STX1;
+        buf[2] = length;
+        buf[3] = status->current_tx_seq;
+        buf[4] = mavlink_system.sysid;
+        buf[5] = mavlink_system.compid;
+        buf[6] = msgid;
 	status->current_tx_seq++;
-	checksum = crc_calculate((const uint8_t*)&buf[1], MAVLINK_CORE_HEADER_LEN);
+        checksum = crc_calculate((const uint8_t*)&buf[2], MAVLINK_CORE_HEADER_LEN);//1 to 2
 	crc_accumulate_buffer(&checksum, packet, length);
 #if MAVLINK_CRC_EXTRA
 	crc_accumulate(crc_extra, &checksum);
@@ -282,11 +289,23 @@ MAVLINK_HELPER uint8_t mavlink_frame_char_buffer(mavlink_message_t* rxmsg,
 			status->parse_state = MAVLINK_PARSE_STATE_GOT_STX;
 			rxmsg->len = 0;
 			rxmsg->magic = c;
-			mavlink_start_checksum(rxmsg);
+//			mavlink_start_checksum(rxmsg);
 		}
 		break;
-
-	case MAVLINK_PARSE_STATE_GOT_STX:
+        case MAVLINK_PARSE_STATE_GOT_STX:
+                if (c == MAVLINK_STX1) {
+                        status->parse_state = MAVLINK_PARSE_STATE_GOT_STX1;
+                        rxmsg->len = 0;
+                        rxmsg->magic1 = c;
+                        mavlink_start_checksum(rxmsg);
+                } else {
+                        status->buffer_overrun++;
+                        status->parse_error++;
+                        status->msg_received = 0;
+                        status->parse_state = MAVLINK_PARSE_STATE_IDLE;
+                }
+                break;
+        case MAVLINK_PARSE_STATE_GOT_STX1:
 			if (status->msg_received 
 /* Support shorter buffers than the
    default maximum packet size */

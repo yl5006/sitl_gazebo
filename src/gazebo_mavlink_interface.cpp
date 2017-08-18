@@ -437,6 +437,8 @@ void GazeboMavlinkInterface::Load(physics::ModelPtr _model, sdf::ElementPtr _sdf
   last_time_ = world_->GetSimTime();
   last_gps_time_ = world_->GetSimTime();
   gps_update_interval_ = 0.2;  // in seconds for 5Hz
+  gps_delay_ = 0.12; // in seconds
+  ev_update_interval_ = 0.05; // in seconds for 20Hz
 
   gravity_W_ = world_->GetPhysicsEngine()->GetGravity();
 
@@ -554,37 +556,71 @@ void GazeboMavlinkInterface::OnUpdate(const common::UpdateInfo& /*_info*/) {
     lon_rad = lon_home;
   }
 
-  if (current_time.Double() - last_gps_time_.Double() > gps_update_interval_) {  // 5Hz
+  if (current_time.Double() - last_gps_time_.Double() > gps_update_interval_ - gps_delay_) {  // 120 ms delay
     // Raw UDP mavlink
-    mavlink_hil_gps_t hil_gps_msg;
-    hil_gps_msg.time_usec = current_time.nsec*1000;
-    hil_gps_msg.fix_type = 3;
-    hil_gps_msg.lat = lat_rad * 180 / M_PI * 1e7;
-    hil_gps_msg.lon = lon_rad * 180 / M_PI * 1e7;
-    hil_gps_msg.alt = (pos_W_I.z + alt_home) * 1000;
-    hil_gps_msg.eph = 100;
-    hil_gps_msg.epv = 100;
-    hil_gps_msg.vel = velocity_current_W_xy.GetLength() * 100;
-    hil_gps_msg.vn = velocity_current_W.y * 100;
-    hil_gps_msg.ve = velocity_current_W.x * 100;
-    hil_gps_msg.vd = -velocity_current_W.z * 100;
+    hil_gps_msg_.time_usec = current_time.Double() * 1e6;
+    hil_gps_msg_.fix_type = 3;
+    hil_gps_msg_.lat = lat_rad * 180 / M_PI * 1e7;
+    hil_gps_msg_.lon = lon_rad * 180 / M_PI * 1e7;
+    hil_gps_msg_.alt = (pos_W_I.z + alt_home) * 1000;
+    hil_gps_msg_.eph = 100;
+    hil_gps_msg_.epv = 100;
+    hil_gps_msg_.vel = velocity_current_W_xy.GetLength() * 100;
+    hil_gps_msg_.vn = velocity_current_W.y * 100;
+    hil_gps_msg_.ve = velocity_current_W.x * 100;
+    hil_gps_msg_.vd = -velocity_current_W.z * 100;
+
     // MAVLINK_HIL_GPS_T CoG is [0, 360]. math::Angle::Normalize() is [-pi, pi].
     math::Angle cog(atan2(velocity_current_W.x, velocity_current_W.y));
     cog.Normalize();
-    hil_gps_msg.cog = static_cast<uint16_t>(GetDegrees360(cog) * 100.0);
-    hil_gps_msg.satellites_visible = 10;
+    hil_gps_msg_.cog = static_cast<uint16_t>(GetDegrees360(cog) * 100.0);
+    hil_gps_msg_.satellites_visible = 10;
+  }
 
+  if (current_time.Double() - last_gps_time_.Double() > gps_update_interval_) {  // 5Hz
     mavlink_message_t msg;
-    mavlink_msg_hil_gps_encode_chan(1, 200, MAVLINK_COMM_0, &msg, &hil_gps_msg);
+    mavlink_msg_hil_gps_encode_chan(1, 200, MAVLINK_COMM_0, &msg, &hil_gps_msg_);
     send_mavlink_message(&msg);
 
     msgs::Vector3d gps_msg;
     gps_msg.set_x(lat_rad * 180. / M_PI);
     gps_msg.set_y(lon_rad * 180. / M_PI);
-    gps_msg.set_z(hil_gps_msg.alt / 1000.f);
+    gps_msg.set_z(hil_gps_msg_.alt / 1000.f);
     gps_pub_->Publish(gps_msg);
 
     last_gps_time_ = current_time;
+  }
+
+  // vision position estimate
+  double dt_ev = current_time.Double() - last_ev_time_.Double();
+  if (dt_ev > ev_update_interval_) {
+    //update noise paramters
+    double noise_ev_x = ev_noise_density*sqrt(dt_ev)*standard_normal_distribution_(random_generator_);
+    double noise_ev_y = ev_noise_density*sqrt(dt_ev)*standard_normal_distribution_(random_generator_);
+    double noise_ev_z = ev_noise_density*sqrt(dt_ev)*standard_normal_distribution_(random_generator_);
+    double random_walk_ev_x = ev_random_walk*sqrt(dt_ev)*standard_normal_distribution_(random_generator_);
+    double random_walk_ev_y = ev_random_walk*sqrt(dt_ev)*standard_normal_distribution_(random_generator_);
+    double random_walk_ev_z = ev_random_walk*sqrt(dt_ev)*standard_normal_distribution_(random_generator_);
+    // bias integration
+    ev_bias_x_ += random_walk_ev_x*dt - ev_bias_x_/ev_corellation_time;
+    ev_bias_y_ += random_walk_ev_y*dt - ev_bias_y_/ev_corellation_time;
+    ev_bias_z_ += random_walk_ev_z*dt - ev_bias_z_/ev_corellation_time;
+
+    mavlink_vision_position_estimate_t vp_msg;
+
+    vp_msg.usec = current_time.Double() * 1e6;
+    vp_msg.y = pos_W_I.x + noise_ev_x + ev_bias_x_;
+    vp_msg.x = pos_W_I.y + noise_ev_y + ev_bias_y_;
+    vp_msg.z = -pos_W_I.z + noise_ev_z + ev_bias_z_;
+    vp_msg.roll = T_W_I.rot.GetRoll();
+    vp_msg.pitch = -T_W_I.rot.GetPitch();
+    vp_msg.yaw = -T_W_I.rot.GetYaw() + M_PI/2.0;
+
+    mavlink_message_t msg_;
+    mavlink_msg_vision_position_estimate_encode_chan(1, 200, MAVLINK_COMM_0, &msg_, &vp_msg);
+    send_mavlink_message(&msg_);
+
+    last_ev_time_ = current_time;
   }
 }
 
@@ -680,7 +716,7 @@ void GazeboMavlinkInterface::ImuCallback(ImuPtr& imu_message) {
   math::Vector3 mag_b = q_nb.RotateVectorReverse(mag_n) + mag_noise_b;
 
   mavlink_hil_sensor_t sensor_msg;
-  sensor_msg.time_usec = world_->GetSimTime().nsec*1000;
+  sensor_msg.time_usec = world_->GetSimTime().Double() * 1e6;
   sensor_msg.xacc = accel_b.x;
   sensor_msg.yacc = accel_b.y;
   sensor_msg.zacc = accel_b.z;
@@ -723,7 +759,7 @@ void GazeboMavlinkInterface::ImuCallback(ImuPtr& imu_message) {
 
   // send ground truth
   mavlink_hil_state_quaternion_t hil_state_quat;
-  hil_state_quat.time_usec = world_->GetSimTime().nsec*1000;
+  hil_state_quat.time_usec = world_->GetSimTime().Double() * 1e6;
   hil_state_quat.attitude_quaternion[0] = q_nb.w;
   hil_state_quat.attitude_quaternion[1] = q_nb.x;
   hil_state_quat.attitude_quaternion[2] = q_nb.y;
@@ -776,7 +812,7 @@ void GazeboMavlinkInterface::LidarCallback(LidarPtr& lidar_message) {
 
 void GazeboMavlinkInterface::OpticalFlowCallback(OpticalFlowPtr& opticalFlow_message) {
   mavlink_hil_optical_flow_t sensor_msg;
-  sensor_msg.time_usec = opticalFlow_message->time_usec();
+  sensor_msg.time_usec = world_->GetSimTime().Double() * 1e6;
   sensor_msg.sensor_id = opticalFlow_message->sensor_id();
   sensor_msg.integration_time_us = opticalFlow_message->integration_time_us();
   sensor_msg.integrated_x = opticalFlow_message->integrated_x();
@@ -796,7 +832,7 @@ void GazeboMavlinkInterface::OpticalFlowCallback(OpticalFlowPtr& opticalFlow_mes
 
 void GazeboMavlinkInterface::SonarCallback(SonarSensPtr& sonar_message) {
   mavlink_distance_sensor_t sensor_msg;
-  sensor_msg.time_boot_ms = sonar_message->time_msec();
+  sensor_msg.time_boot_ms = world_->GetSimTime().Double() * 1e3;
   sensor_msg.min_distance = sonar_message->min_distance() * 100.0;
   sensor_msg.max_distance = sonar_message->max_distance() * 100.0;
   sensor_msg.current_distance = sonar_message->current_distance() * 100.0;

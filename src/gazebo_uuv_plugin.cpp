@@ -131,7 +131,7 @@ void GazeboUUVPlugin::OnUpdate(const common::UpdateInfo& _info) {
   for(int i = 0; i < 4; i++) {
     
     // Currently a rotor index hack to get over IMU link being first, since rotor_links_[0] would be the IMU
-    math::Vector3 rotor_force(motor_force_constant_ * command_[i], 0, 0);
+    math::Vector3 rotor_force(motor_force_constant_ * command_[i] * std::abs(command_[i]), 0, 0);
     rotor_links_[i+1]->AddRelativeForce(rotor_force);
     
     forces[i] = rotor_force[0];
@@ -141,7 +141,7 @@ void GazeboUUVPlugin::OnUpdate(const common::UpdateInfo& _info) {
     // directly to main body X axis
     int propeller_direction = ((i+1)%2==0)?1:-1;            // ternary operator:  (condition) ? (if_true) : (if_false)
     math::Vector3 rotor_torque(
-      propeller_direction * motor_torque_constant_ * command_[i], 0, 0);
+      propeller_direction * motor_torque_constant_ * command_[i] * std::abs(command_[i]), 0, 0);
     link_->AddRelativeTorque(rotor_torque);
 
     //std::cout << "Applying torque " << rotor_torque[2] << " to rotor " << i << "\n";

@@ -36,6 +36,7 @@
 #include "opticalFlow.pb.h"
 #include "lidar.pb.h"
 #include "sonarSens.pb.h"
+#include <irlock.pb.h>
 #include <boost/bind.hpp>
 
 #include <iostream>
@@ -59,6 +60,7 @@ typedef const boost::shared_ptr<const sensor_msgs::msgs::Imu> ImuPtr;
 typedef const boost::shared_ptr<const lidar_msgs::msgs::lidar> LidarPtr;
 typedef const boost::shared_ptr<const opticalFlow_msgs::msgs::opticalFlow> OpticalFlowPtr;
 typedef const boost::shared_ptr<const sonarSens_msgs::msgs::sonarSens> SonarSensPtr;
+typedef const boost::shared_ptr<const irlock_msgs::msgs::irlock> IRLockPtr;
 
 // Default values
 static const std::string kDefaultNamespace = "";
@@ -71,6 +73,7 @@ static const std::string kDefaultImuTopic = "/imu";
 static const std::string kDefaultLidarTopic = "/lidar/link/lidar";
 static const std::string kDefaultOpticalFlowTopic = "/camera/link/opticalFlow";
 static const std::string kDefaultSonarTopic = "/sonar_model/link/sonar";
+static const std::string kDefaultIRLockTopic = "/camera/link/irlock";
 
 class GazeboMavlinkInterface : public ModelPlugin {
  public:
@@ -84,6 +87,7 @@ class GazeboMavlinkInterface : public ModelPlugin {
         opticalFlow_sub_topic_(kDefaultOpticalFlowTopic),
         lidar_sub_topic_(kDefaultLidarTopic),
         sonar_sub_topic_(kDefaultSonarTopic),
+        irlock_sub_topic_(kDefaultIRLockTopic),
         model_{},
         world_(nullptr),
         left_elevon_joint_(nullptr),
@@ -154,6 +158,7 @@ class GazeboMavlinkInterface : public ModelPlugin {
   void LidarCallback(LidarPtr& lidar_msg);
   void SonarCallback(SonarSensPtr& sonar_msg);
   void OpticalFlowCallback(OpticalFlowPtr& opticalFlow_msg);
+  void IRLockCallback(IRLockPtr& irlock_msg);
   void send_mavlink_message(const mavlink_message_t *message, const int destination_port=0);
   void handle_message(mavlink_message_t *msg);
   void pollForMAVLinkMessages(double _dt, uint32_t _timeoutMs);
@@ -164,6 +169,9 @@ class GazeboMavlinkInterface : public ModelPlugin {
   static constexpr double ev_corellation_time = 60.0; // s
   static constexpr double ev_random_walk = 2.0; // (m/s) / sqrt(hz)
   static constexpr double ev_noise_density = 2e-4; // (m) / sqrt(hz)
+  static constexpr double gps_corellation_time = 30.0; // s
+  static constexpr double gps_random_walk = 1.0; // (m/s) / sqrt(hz)
+  static constexpr double gps_noise_density = 2e-4; // (m) / sqrt(hz)
 
   unsigned _rotor_count;
 
@@ -180,11 +188,13 @@ class GazeboMavlinkInterface : public ModelPlugin {
   transport::SubscriberPtr lidar_sub_;
   transport::SubscriberPtr sonar_sub_;
   transport::SubscriberPtr opticalFlow_sub_;
+  transport::SubscriberPtr irlock_sub_;
   transport::PublisherPtr gps_pub_;
   std::string imu_sub_topic_;
   std::string lidar_sub_topic_;
   std::string opticalFlow_sub_topic_;
   std::string sonar_sub_topic_;
+  std::string irlock_sub_topic_;
 
   common::Time last_time_;
   common::Time last_gps_time_;
@@ -199,6 +209,9 @@ class GazeboMavlinkInterface : public ModelPlugin {
   double ev_bias_x_;
   double ev_bias_y_;
   double ev_bias_z_;
+  double gps_bias_x_;
+  double gps_bias_y_;
+  double gps_bias_z_;
 
   void handle_control(double _dt);
 
@@ -219,9 +232,7 @@ class GazeboMavlinkInterface : public ModelPlugin {
   struct sockaddr_in _srcaddr_2;  ///< MAVROS
 
   //so we dont have to do extra callbacks
-  double optflow_xgyro;
-  double optflow_ygyro;
-  double optflow_zgyro;
+  math::Vector3 optflow_gyro{};
   double optflow_distance;
   double sonar_distance;
 

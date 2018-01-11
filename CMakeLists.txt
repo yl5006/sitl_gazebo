@@ -21,6 +21,7 @@ list(APPEND CMAKE_MODULE_PATH /usr/local/share/cmake/Modules)
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_LIST_DIR}/cmake")
 
 option(BUILD_GSTREAMER_PLUGIN "enable gstreamer plugin" "OFF")
+
 option(BUILD_ROS_INTERFACE "enable ROS subscriber for motor failure plugin" "OFF")
 
 ## System dependencies are found with CMake's conventions
@@ -31,22 +32,32 @@ find_package(OpenCV REQUIRED)
 find_package(Boost REQUIRED COMPONENTS system thread timer)
 if (BUILD_GSTREAMER_PLUGIN)
   find_package(GStreamer)
+  if (GSTREAMER_FOUND)
+    if("${GAZEBO_VERSION}" VERSION_LESS "8.0")
+      find_package (Qt4)
+      include (${QT_USE_FILE})
+    endif()
+  endif()
 endif()
+
+include_directories(SYSTEM ${GAZEBO_INCLUDE_DIRS})
+link_directories(${GAZEBO_LIBRARY_DIRS})
+
 add_subdirectory( external/OpticalFlow OpticalFlow )
 set( OpticalFlow_LIBS "OpticalFlow" )
 
-# for ROS subscriber
+# for ROS subscribers and publishers
 if (BUILD_ROS_INTERFACE)
   find_package(roscpp REQUIRED)
-  find_package(std_msgs REQUIRED)
+  find_package(mavros REQUIRED)
+  find_package(mavros_msgs REQUIRED)
+  find_package(geometry_msgs REQUIRED)
+  find_package(sensor_msgs REQUIRED)
+  find_package(mav_msgs REQUIRED)
 endif()
 
-# find ROS include directories for building against ROS mavlink version
-find_package(roscpp)
-if (roscpp_FOUND)
-   include_directories(${roscpp_INCLUDE_DIRS})
-   include_directories(${std_msgs_INCLUDE_DIRS})
-endif()
+# find MAVLink
+find_package(MAVLink)
 
 # see if catkin was invoked to build this
 if (CATKIN_DEVEL_PREFIX)
@@ -135,9 +146,14 @@ include_directories(
   # Workaround for OGRE include dirs on Mac OS
   /usr/local/include/OGRE
   /usr/local/include/OGRE/Paging
-  ${GSTREAMER_INCLUDE_DIRS}
-  ../../mavlink/include
+  ${MAVLINK_INCLUDE_DIRS}
   )
+
+if (GSTREAMER_FOUND)
+  include_directories(
+    ${GSTREAMER_INCLUDE_DIRS}
+  )
+endif()
 
 link_libraries(
   ${PROTOBUF_LIBRARY}
@@ -146,8 +162,13 @@ link_libraries(
   ${Boost_SYSTEM_LIBRARY_RELEASE}
   ${Boost_THREAD_LIBRARY_RELEASE}
   ${Boost_TIMER_LIBRARY_RELEASE}
-  ${GSTREAMER_LIBRARIES}
   )
+
+if (GSTREAMER_FOUND)
+  link_libraries(
+    ${GSTREAMER_LIBRARIES}
+  )
+endif()
 
 link_directories(
   ${GAZEBO_LIBRARY_DIRS}
@@ -184,6 +205,7 @@ add_custom_target(sdf ALL DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/models/iris/iris.s
 
 set (msgs
   msgs/Float.proto
+  msgs/Int32.proto
   msgs/SensorImu.proto
   msgs/opticalFlow.proto
   msgs/lidar.proto
@@ -192,6 +214,8 @@ set (msgs
   #msgs/Wind.proto
   msgs/sonarSens.proto
   msgs/irlock.proto
+  msgs/SITLGps.proto
+  msgs/Groundtruth.proto
 )
 PROTOBUF_GENERATE_CPP(PROTO_SRCS PROTO_HDRS ${msgs})
 add_library(mav_msgs SHARED ${PROTO_SRCS})
@@ -221,6 +245,7 @@ add_library(rotors_gazebo_mavlink_interface SHARED src/gazebo_mavlink_interface.
 #add_library(rotors_gazebo_wind_plugin SHARED src/gazebo_wind_plugin.cpp)
 add_library(gazebo_sonar_plugin SHARED src/gazebo_sonar_plugin.cpp)
 add_library(gazebo_uuv_plugin SHARED src/gazebo_uuv_plugin.cpp)
+add_library(gazebo_gps_plugin SHARED src/gazebo_gps_plugin.cpp)
 
 set(plugins
   rotors_gazebo_controller_interface
@@ -234,6 +259,7 @@ set(plugins
   #rotors_gazebo_wind_plugin
   gazebo_sonar_plugin
   gazebo_uuv_plugin
+  gazebo_gps_plugin
   )
 
 # ROS mavlink version not compatible with geotagged images plugin
@@ -242,11 +268,35 @@ if (NOT roscpp_FOUND)
   list(APPEND plugins gazebo_geotagged_images_plugin)
 endif()
 
+#If BUILD_ROS_INTERFACE set to ON, build gazebo_hil_interface and gazebo_motor_failure_plugin
 if (BUILD_ROS_INTERFACE)
   add_library(gazebo_motor_failure_plugin SHARED src/gazebo_motor_failure_plugin.cpp)
   target_link_libraries(gazebo_motor_failure_plugin ${GAZEBO_libraries} ${roscpp_LIBRARIES})
   list(APPEND plugins gazebo_motor_failure_plugin)
   message(STATUS "adding gazebo_motor_failure_plugin to build")
+
+  include_directories(
+    include
+    ${mavros_msgs_INCLUDE_DIRS}
+    ${geometry_msgs_INCLUDE_DIRS}
+    ${sensor_msgs_INCLUDE_DIRS}
+    ${mav_msgs_INCLUDE_DIRS}
+    )
+  add_executable(gazebo_hil_interface
+    src/gazebo_hil_interface.cpp
+  )
+
+  add_dependencies(gazebo_hil_interface
+    ${catkin_EXPORTED_TARGETS}
+    ${mavros_EXPORTED_TARGETS}
+    ${mavros_msgs_EXPORTED_TARGETS}
+  )
+
+  target_link_libraries(gazebo_hil_interface
+    ${catkin_LIBRARIES}
+    ${mavros_LIBRARIES}
+  )
+  message(STATUS "adding gazebo_hil_interface to build")
 endif()
 
 if (GSTREAMER_FOUND)
@@ -256,6 +306,17 @@ if (GSTREAMER_FOUND)
     gazebo_gst_camera_plugin
   )
   message(STATUS "Found GStreamer: adding gst_camera_plugin")
+  if("${GAZEBO_VERSION}" VERSION_LESS "8.0")
+    QT4_WRAP_CPP(headers_MOC include/gazebo_video_stream_widget.h)
+    add_library(gazebo_video_stream_widget SHARED ${headers_MOC} src/gazebo_video_stream_widget.cpp)
+    target_link_libraries(gazebo_video_stream_widget ${GAZEBO_LIBRARIES} ${QT_LIBRARIES} ${PROTOBUF_LIBRARIES})
+    set(plugins
+      ${plugins}
+      gazebo_video_stream_widget
+    )
+
+    message(STATUS "Found GStreamer: adding gst_video_stream_widget")
+  endif()
 endif()
 
 # Linux is not consistent with plugin availability, even on Gazebo 7
@@ -318,4 +379,3 @@ set(CPACK_PACKAGE_FILE_NAME "${PROJECT_NAME}-${GAZEBO_MAJOR_VERSION}-${PROJECT_V
 set(CPACK_SOURCE_PACKAGE_FILE_NAME "${PROJECT_NAME}-${GAZEBO_MAJOR_VERSION}-${PROJECT_VERSION}")
 
 include(CPack)
-# vim: set et fenc= ff=unix sts=0 sw=2 ts=2 :

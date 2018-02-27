@@ -30,6 +30,7 @@ find_package(gazebo REQUIRED)
 find_program(px4 REQUIRED)
 find_package(OpenCV REQUIRED)
 find_package(Boost REQUIRED COMPONENTS system thread timer)
+find_package(PythonInterp REQUIRED)
 if (BUILD_GSTREAMER_PLUGIN)
   find_package(GStreamer)
   if (GSTREAMER_FOUND)
@@ -190,7 +191,7 @@ set(scripts_dir "${CMAKE_CURRENT_SOURCE_DIR}/scripts")
 add_custom_command(OUTPUT ${CMAKE_CURRENT_SOURCE_DIR}/models/iris/iris.sdf
   WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
   COMMAND rm -f ${CMAKE_CURRENT_SOURCE_DIR}/models/iris/iris.sdf
-  COMMAND python ${scripts_dir}/xacro.py -o  ${rotors_description_dir}/urdf/iris_base.urdf  ${rotors_description_dir}/urdf/iris_base.xacro enable_mavlink_interface:=${enable_mavlink_interface} enable_ground_truth:=${enable_ground_truth} enable_wind:=${enable_wind} enable_logging:=${enable_logging} rotors_description_dir:=${rotors_description_dir}
+  COMMAND ${PYTHON_EXECUTABLE} ${scripts_dir}/xacro.py -o  ${rotors_description_dir}/urdf/iris_base.urdf  ${rotors_description_dir}/urdf/iris_base.xacro enable_mavlink_interface:=${enable_mavlink_interface} enable_ground_truth:=${enable_ground_truth} enable_wind:=${enable_wind} enable_logging:=${enable_logging} rotors_description_dir:=${rotors_description_dir}
   COMMAND gz sdf -p  ${rotors_description_dir}/urdf/iris_base.urdf >> ${CMAKE_CURRENT_SOURCE_DIR}/models/iris/iris.sdf
   COMMAND rm -f ${rotors_description_dir}/urdf/iris_base.urdf
   DEPENDS ${rotors_description_dir}/urdf/iris.xacro
@@ -198,6 +199,36 @@ add_custom_command(OUTPUT ${CMAKE_CURRENT_SOURCE_DIR}/models/iris/iris.sdf
   DEPENDS ${rotors_description_dir}/urdf/component_snippets.xacro
   )
 add_custom_target(sdf ALL DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/models/iris/iris.sdf)
+
+
+#-----------#
+# Functions #
+#-----------#
+function(glob_generate target file_glob)
+  file(GLOB_RECURSE glob_files RELATIVE ${CMAKE_CURRENT_SOURCE_DIR} ${file_glob})
+	set(gen_files)
+	foreach(glob_file ${glob_files})
+		string(REGEX REPLACE "\\.[^.]*$" "" file_name ${glob_file})
+		string(REGEX MATCH "[^.]*$" file_ext ${glob_file})
+		get_filename_component(file_dir ${glob_file} DIRECTORY)
+		set(in_file ${CMAKE_CURRENT_SOURCE_DIR}/${glob_file})
+		file(MAKE_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/${file_dir})
+		set(out_file ${CMAKE_CURRENT_SOURCE_DIR}/${file_name})
+		string(REGEX REPLACE ".sdf" "-gen.sdf" out_file ${out_file})
+		if (${file_ext} STREQUAL "jinja")
+			add_custom_command(OUTPUT ${out_file}
+        COMMAND ${PYTHON_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/jinja_gen.py
+        ${in_file} ${CMAKE_CURRENT_SOURCE_DIR}
+				DEPENDS ${in_file}
+				VERBATIM
+				)
+			list(APPEND gen_files_${target} ${out_file})
+		endif()
+	endforeach()
+	add_custom_target(${target} ALL DEPENDS ${gen_files_${target}})
+endfunction()
+
+glob_generate(models_gen ${CMAKE_CURRENT_SOURCE_DIR}/models/*.jinja)
 
 #--------------------#
 # Message Generation #
@@ -216,6 +247,7 @@ set (msgs
   msgs/irlock.proto
   msgs/SITLGps.proto
   msgs/Groundtruth.proto
+  msgs/odom.proto
 )
 PROTOBUF_GENERATE_CPP(PROTO_SRCS PROTO_HDRS ${msgs})
 add_library(mav_msgs SHARED ${PROTO_SRCS})
@@ -246,6 +278,7 @@ add_library(rotors_gazebo_mavlink_interface SHARED src/gazebo_mavlink_interface.
 add_library(gazebo_sonar_plugin SHARED src/gazebo_sonar_plugin.cpp)
 add_library(gazebo_uuv_plugin SHARED src/gazebo_uuv_plugin.cpp)
 add_library(gazebo_gps_plugin SHARED src/gazebo_gps_plugin.cpp)
+add_library(gazebo_vision_plugin SHARED src/gazebo_vision_plugin.cpp)
 
 set(plugins
   rotors_gazebo_controller_interface
@@ -260,6 +293,7 @@ set(plugins
   gazebo_sonar_plugin
   gazebo_uuv_plugin
   gazebo_gps_plugin
+  gazebo_vision_plugin
   )
 
 # ROS mavlink version not compatible with geotagged images plugin

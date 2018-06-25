@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 2.8.3 FATAL_ERROR)
+cmake_minimum_required(VERSION 3.5 FATAL_ERROR)
 cmake_policy(SET CMP0042 NEW)
 cmake_policy(SET CMP0048 NEW)
 cmake_policy(SET CMP0054 NEW)
@@ -22,15 +22,16 @@ list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_LIST_DIR}/cmake")
 
 option(BUILD_GSTREAMER_PLUGIN "enable gstreamer plugin" "OFF")
 
-option(BUILD_ROS_INTERFACE "enable ROS subscriber for motor failure plugin" "OFF")
+option(BUILD_ROS_INTERFACE "Enable building ROS dependent plugins" "OFF")
 
 ## System dependencies are found with CMake's conventions
-find_package(PkgConfig REQUIRED)
+find_package(Boost 1.58 REQUIRED COMPONENTS system thread timer)
 find_package(gazebo REQUIRED)
+find_package(PkgConfig REQUIRED)
 find_program(px4 REQUIRED)
-find_package(OpenCV REQUIRED)
-find_package(Boost REQUIRED COMPONENTS system thread timer)
 find_package(PythonInterp REQUIRED)
+find_package(OpenCV REQUIRED)
+find_package(TinyXML REQUIRED)
 if (BUILD_GSTREAMER_PLUGIN)
   find_package(GStreamer)
   if (GSTREAMER_FOUND)
@@ -41,6 +42,8 @@ if (BUILD_GSTREAMER_PLUGIN)
   endif()
 endif()
 
+pkg_check_modules(OGRE OGRE)
+
 include_directories(SYSTEM ${GAZEBO_INCLUDE_DIRS})
 link_directories(${GAZEBO_LIBRARY_DIRS})
 
@@ -49,12 +52,12 @@ set( OpticalFlow_LIBS "OpticalFlow" )
 
 # for ROS subscribers and publishers
 if (BUILD_ROS_INTERFACE)
-  find_package(roscpp REQUIRED)
   find_package(mavros REQUIRED)
   find_package(mavros_msgs REQUIRED)
-  find_package(geometry_msgs REQUIRED)
-  find_package(sensor_msgs REQUIRED)
   find_package(mav_msgs REQUIRED)
+  find_package(geometry_msgs REQUIRED)
+  find_package(roscpp REQUIRED)
+  find_package(sensor_msgs REQUIRED)
 endif()
 
 # find MAVLink
@@ -78,7 +81,6 @@ endif()
 # compiled headers from Gazebo directly
 # or to have something entirely independent.
 #
-
 set(PROTOBUF_IMPORT_DIRS "")
 foreach(ITR ${GAZEBO_INCLUDE_DIRS})
   if(ITR MATCHES ".*gazebo-[0-9.]+$")
@@ -115,15 +117,14 @@ else()
   set(EIGEN3_INCLUDE_DIRS ${EIGEN3_INCLUDE_DIR})
 endif()
 
-find_package(Boost 1.40 COMPONENTS system thread timer REQUIRED )
-
 ###########
 ## Build ##
 ###########
 
-set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS}  -std=c99 -Wno-deprecated-declarations")
-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${GAZEBO_CXX_FLAGS} -std=c++11 -Wno-deprecated-declarations")
-# -Wno-deprecated-declarations: Shut up warnings about std::binder1st, std::binder2nd.
+set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -std=c99 -Wno-deprecated-declarations")
+
+include(EnableC++XX)
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${GAZEBO_CXX_FLAGS} -Wno-deprecated-declarations")
 
 set(GAZEBO_MSG_INCLUDE_DIRS)
 foreach(ITR ${GAZEBO_INCLUDE_DIRS})
@@ -134,20 +135,18 @@ endforeach()
 
 include_directories(
   include
-  ${OpticalFlow_INCLUDE_DIRS}
+  ${Boost_INCLUDE_DIR}
+  ${CMAKE_CURRENT_BINARY_DIR}
+  ${EIGEN3_INCLUDE_DIRS}
+  ${EIGEN3_INCLUDE_DIRS}/eigen3	# Workaround for Eigen3
   ${GAZEBO_INCLUDE_DIRS}
   ${GAZEBO_MSG_INCLUDE_DIRS}
-  ${EIGEN3_INCLUDE_DIRS}
-  ${OpenCV_INCLUDE_DIRS}
-  ${CMAKE_CURRENT_BINARY_DIR}
-  ${Boost_INCLUDE_DIR}
-  # Workaround for Eigen3
-  ${Boost_INCLUDE_DIR}/eigen3
-  ${EIGEN3_INCLUDE_DIRS}/eigen3
-  # Workaround for OGRE include dirs on Mac OS
-  /usr/local/include/OGRE
-  /usr/local/include/OGRE/Paging
   ${MAVLINK_INCLUDE_DIRS}
+  ${OGRE_INCLUDE_DIRS}
+  ${OGRE_INCLUDE_DIRS}/Paging		# Workaround for "fatal error: OgrePagedWorldSection.h: No such file or directory"
+  ${OpenCV_INCLUDE_DIRS}
+  ${OpticalFlow_INCLUDE_DIRS}
+  ${TinyXML_INCLUDE_DIRS}
   )
 
 if (GSTREAMER_FOUND)
@@ -157,12 +156,12 @@ if (GSTREAMER_FOUND)
 endif()
 
 link_libraries(
-  ${PROTOBUF_LIBRARY}
-  ${GAZEBO_LIBRARIES}
-  ${OpenCV_LIBRARIES}
   ${Boost_SYSTEM_LIBRARY_RELEASE}
   ${Boost_THREAD_LIBRARY_RELEASE}
   ${Boost_TIMER_LIBRARY_RELEASE}
+  ${GAZEBO_LIBRARIES}
+  ${OpenCV_LIBRARIES}
+  ${PROTOBUF_LIBRARY}
   )
 
 if (GSTREAMER_FOUND)
@@ -174,6 +173,7 @@ endif()
 link_directories(
   ${GAZEBO_LIBRARY_DIRS}
   ${CMAKE_CURRENT_BINARY_DIR}
+  ${OGRE_LIBRARY_DIRS}
   )
 
 #--------------------------#
@@ -204,6 +204,7 @@ add_custom_target(sdf ALL DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/models/iris/iris.s
 #-----------#
 # Functions #
 #-----------#
+
 function(glob_generate target file_glob)
   file(GLOB_RECURSE glob_files RELATIVE ${CMAKE_CURRENT_SOURCE_DIR} ${file_glob})
 	set(gen_files)
@@ -234,75 +235,83 @@ glob_generate(models_gen ${CMAKE_CURRENT_SOURCE_DIR}/models/*.jinja)
 # Message Generation #
 #--------------------#
 
-set (msgs
-  msgs/Float.proto
-  msgs/Int32.proto
-  msgs/SensorImu.proto
-  msgs/opticalFlow.proto
-  msgs/lidar.proto
+set(mav_msgs
   msgs/CommandMotorSpeed.proto
   msgs/MotorSpeed.proto
-  #msgs/Wind.proto
-  msgs/sonarSens.proto
-  msgs/irlock.proto
-  msgs/SITLGps.proto
+  )
+set(nav_msgs msgs/Odometry.proto)
+#set(physics_msgs msgs/Wind.proto)
+set(std_msgs msgs/Int32.proto)
+set(sensor_msgs
+  msgs/Imu.proto
+  msgs/IRLock.proto
+  msgs/Float.proto
   msgs/Groundtruth.proto
-  msgs/odom.proto
-)
-PROTOBUF_GENERATE_CPP(PROTO_SRCS PROTO_HDRS ${msgs})
-add_library(mav_msgs SHARED ${PROTO_SRCS})
+  msgs/Range.proto
+  msgs/SITLGps.proto
+  msgs/OpticalFlow.proto
+  )
+
+PROTOBUF_GENERATE_CPP(MAV_PROTO_SRCS MAV_PROTO_HDRS ${mav_msgs})
+PROTOBUF_GENERATE_CPP(NAV_PROTO_SRCS NAV_PROTO_HDRS ${nav_msgs})
+#PROTOBUF_GENERATE_CPP(PHY_PROTO_SRCS PHY_PROTO_HDRS ${physics_msgs})
+PROTOBUF_GENERATE_CPP(STD_PROTO_SRCS STD_PROTO_HDRS ${std_msgs})
+PROTOBUF_GENERATE_CPP(SEN_PROTO_SRCS SEN_PROTO_HDRS ${sensor_msgs})
+
+add_library(mav_msgs SHARED ${MAV_PROTO_SRCS})
+add_library(nav_msgs SHARED ${NAV_PROTO_SRCS})
+#add_library(physics_msgs SHARED ${PHY_PROTO_SRCS})
+add_library(std_msgs SHARED ${STD_PROTO_SRCS})
+add_library(sensor_msgs SHARED ${SEN_PROTO_SRCS})
 
 #---------#
 # Plugins #
 #---------#
 
+link_libraries(mav_msgs nav_msgs std_msgs sensor_msgs)
+#link_libraries(physics_msgs)
 
-link_libraries(mav_msgs)
-
-# add_library(hello_world SHARED src/hello_world.cc)
-
-add_library(rotors_gazebo_gimbal_controller_plugin SHARED src/gazebo_gimbal_controller_plugin.cpp)
-target_link_libraries(rotors_gazebo_gimbal_controller_plugin ${Boost_LIBRARIES} ${GAZEBO_LIBRARIES} ${Boost_SYSTEM_LIBRARY_RELEASE} ${Boost_THREAD_LIBRARY_RELEASE})
-# add_dependencies(rotors_gazebo_gimbal_controller_plugin)
-
-add_library(rotors_gazebo_controller_interface SHARED src/gazebo_controller_interface.cpp)
-add_library(rotors_gazebo_motor_model SHARED src/gazebo_motor_model.cpp)
-add_library(rotors_gazebo_multirotor_base_plugin SHARED src/gazebo_multirotor_base_plugin.cpp)
-add_library(rotors_gazebo_imu_plugin SHARED src/gazebo_imu_plugin.cpp)
-add_library(gazebo_opticalFlow_plugin SHARED src/gazebo_opticalFlow_plugin.cpp)
-target_link_libraries(gazebo_opticalFlow_plugin ${OpticalFlow_LIBS})
-add_library(gazebo_lidar_plugin SHARED src/gazebo_lidar_plugin.cpp)
+add_library(gazebo_geotagged_images_plugin SHARED src/gazebo_geotagged_images_plugin.cpp)
+add_library(gazebo_gps_plugin SHARED src/gazebo_gps_plugin.cpp)
 add_library(gazebo_irlock_plugin SHARED src/gazebo_irlock_plugin.cpp)
-add_library(rotors_gazebo_mavlink_interface SHARED src/gazebo_mavlink_interface.cpp src/geo_mag_declination.cpp)
-#add_library(rotors_gazebo_wind_plugin SHARED src/gazebo_wind_plugin.cpp)
+add_library(gazebo_lidar_plugin SHARED src/gazebo_lidar_plugin.cpp)
+add_library(gazebo_opticalflow_plugin SHARED src/gazebo_opticalflow_plugin.cpp)
 add_library(gazebo_sonar_plugin SHARED src/gazebo_sonar_plugin.cpp)
 add_library(gazebo_uuv_plugin SHARED src/gazebo_uuv_plugin.cpp)
-add_library(gazebo_gps_plugin SHARED src/gazebo_gps_plugin.cpp)
 add_library(gazebo_vision_plugin SHARED src/gazebo_vision_plugin.cpp)
+add_library(gazebo_controller_interface SHARED src/gazebo_controller_interface.cpp)
+add_library(gazebo_gimbal_controller_plugin SHARED src/gazebo_gimbal_controller_plugin.cpp)
+add_library(gazebo_imu_plugin SHARED src/gazebo_imu_plugin.cpp)
+add_library(gazebo_mavlink_interface SHARED src/gazebo_mavlink_interface.cpp src/geo_mag_declination.cpp)
+add_library(gazebo_motor_model SHARED src/gazebo_motor_model.cpp)
+add_library(gazebo_multirotor_base_plugin SHARED src/gazebo_multirotor_base_plugin.cpp)
+#add_library(gazebo_wind_plugin SHARED src/gazebo_wind_plugin.cpp)
 
 set(plugins
-  rotors_gazebo_controller_interface
-  rotors_gazebo_motor_model
-  rotors_gazebo_multirotor_base_plugin
-  rotors_gazebo_imu_plugin
-  gazebo_opticalFlow_plugin
-  gazebo_lidar_plugin
+  gazebo_geotagged_images_plugin
+  gazebo_gps_plugin
   gazebo_irlock_plugin
-  rotors_gazebo_mavlink_interface
-  #rotors_gazebo_wind_plugin
+  gazebo_lidar_plugin
+  gazebo_opticalflow_plugin
   gazebo_sonar_plugin
   gazebo_uuv_plugin
-  gazebo_gps_plugin
   gazebo_vision_plugin
+  gazebo_controller_interface
+  gazebo_gimbal_controller_plugin
+  gazebo_imu_plugin
+  gazebo_mavlink_interface
+  gazebo_motor_model
+  gazebo_multirotor_base_plugin
+  #gazebo_wind_plugin
   )
 
-# ROS mavlink version not compatible with geotagged images plugin
-if (NOT roscpp_FOUND)
-  add_library(gazebo_geotagged_images_plugin SHARED src/gazebo_geotagged_images_plugin.cpp)
-  list(APPEND plugins gazebo_geotagged_images_plugin)
-endif()
+foreach(plugin ${plugins})
+  target_link_libraries(${plugin} ${Boost_LIBRARIES} ${GAZEBO_LIBRARIES} ${TinyXML_LIBRARIES})
+endforeach()
+target_link_libraries(gazebo_opticalflow_plugin ${OpticalFlow_LIBS})
 
-#If BUILD_ROS_INTERFACE set to ON, build gazebo_hil_interface and gazebo_motor_failure_plugin
+# If BUILD_ROS_INTERFACE set to ON, build plugins that have ROS dependencies
+# Current plugins that can be used with ROS interface: gazebo_motor_failure_plugin
 if (BUILD_ROS_INTERFACE)
   add_library(gazebo_motor_failure_plugin SHARED src/gazebo_motor_failure_plugin.cpp)
   target_link_libraries(gazebo_motor_failure_plugin ${GAZEBO_libraries} ${roscpp_LIBRARIES})
@@ -316,21 +325,21 @@ if (BUILD_ROS_INTERFACE)
     ${sensor_msgs_INCLUDE_DIRS}
     ${mav_msgs_INCLUDE_DIRS}
     )
-  add_executable(gazebo_hil_interface
-    src/gazebo_hil_interface.cpp
+  add_executable(gazebo_motor_failure_plugin
+    src/gazebo_motor_failure_plugin.cpp
   )
 
-  add_dependencies(gazebo_hil_interface
+  add_dependencies(gazebo_motor_failure_plugin
     ${catkin_EXPORTED_TARGETS}
     ${mavros_EXPORTED_TARGETS}
     ${mavros_msgs_EXPORTED_TARGETS}
   )
 
-  target_link_libraries(gazebo_hil_interface
+  target_link_libraries(gazebo_motor_failure_plugin
     ${catkin_LIBRARIES}
     ${mavros_LIBRARIES}
   )
-  message(STATUS "adding gazebo_hil_interface to build")
+  message(STATUS "adding gazebo_motor_failure_plugin to build")
 endif()
 
 if (GSTREAMER_FOUND)
@@ -348,7 +357,6 @@ if (GSTREAMER_FOUND)
       ${plugins}
       gazebo_video_stream_widget
     )
-
     message(STATUS "Found GStreamer: adding gst_video_stream_widget")
   endif()
 endif()
@@ -360,8 +368,16 @@ endif()
 #endif()
 
 foreach(plugin ${plugins})
-  add_dependencies(${plugin} mav_msgs)
+  add_dependencies(${plugin} mav_msgs nav_msgs std_msgs sensor_msgs)
+  # add_dependencies(${plugin} physics_msgs)
 endforeach()
+
+# Configure the setup script
+if (catkin_FOUND)
+  catkin_add_env_hooks(50_sitl_gazebo_setup
+    DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/cmake
+    SHELLS sh)
+endif()
 
 #############
 ## Install ##
@@ -377,17 +393,18 @@ file(GLOB models_list LIST_DIRECTORIES true ${PROJECT_SOURCE_DIR}/models/*)
 file(REMOVE_RECURSE ${PROJECT_SOURCE_DIR}/worlds/.DS_Store)
 file(GLOB worlds_list LIST_DIRECTORIES true ${PROJECT_SOURCE_DIR}/worlds/*)
 
-install(TARGETS ${plugins} mav_msgs DESTINATION ${PLUGIN_PATH})
+install(TARGETS ${plugins} mav_msgs nav_msgs std_msgs sensor_msgs DESTINATION ${PLUGIN_PATH})
 install(DIRECTORY ${models_list} DESTINATION ${MODEL_PATH})
 install(FILES ${worlds_list} DESTINATION ${RESOURCE_PATH}/worlds)
 
 configure_file(src/setup.sh.in "${CMAKE_CURRENT_BINARY_DIR}/setup.sh" @ONLY)
 install(FILES ${CMAKE_CURRENT_BINARY_DIR}/setup.sh DESTINATION ${RESOURCE_PATH})
 
-
 #############
 ## Testing ##
 #############
+
+# TODO
 
 ###############
 ## Packaging ##

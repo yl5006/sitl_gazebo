@@ -42,7 +42,7 @@
 #include <gazebo/transport/transport.hh>
 #include <gazebo/msgs/msgs.hh>
 #include <gazebo/physics/physics.hh>
-#include <gazebo/math/gzmath.hh>
+#include <ignition/math.hh>
 
 #include <SITLGps.pb.h>
 #include <Groundtruth.pb.h>
@@ -60,7 +60,7 @@ protected:
   virtual void OnUpdate(const common::UpdateInfo&);
 
 private:
-  std::pair<double, double> reproject(math::Vector3& pos);
+  std::pair<double, double> reproject(ignition::math::Vector3d& pos);
 
   std::string namespace_;
   std::default_random_engine random_generator_;
@@ -76,8 +76,8 @@ private:
   transport::PublisherPtr gt_pub_;
   transport::PublisherPtr gps_pub_;
 
-  gps_msgs::msgs::SITLGps gps_msg;
-  gps_msgs::msgs::Groundtruth groundtruth_msg;
+  sensor_msgs::msgs::SITLGps gps_msg;
+  sensor_msgs::msgs::Groundtruth groundtruth_msg;
 
   common::Time last_gps_time_;
   common::Time last_time_;
@@ -105,14 +105,14 @@ private:
   static constexpr double gps_update_interval_ = 0.2; // 5hz
   static constexpr double gps_delay = 0.12;           // 120 ms
   static constexpr int gps_buffer_size_max = 1000;
-  std::queue<gps_msgs::msgs::SITLGps> gps_delay_buffer;
+  std::queue<sensor_msgs::msgs::SITLGps> gps_delay_buffer;
 
-  math::Vector3 gps_bias;
-  math::Vector3 noise_gps_pos;
-  math::Vector3 noise_gps_vel;
-  math::Vector3 random_walk_gps;
-  math::Vector3 gravity_W_;
-  math::Vector3 velocity_prev_W_;
+  ignition::math::Vector3d gps_bias;
+  ignition::math::Vector3d noise_gps_pos;
+  ignition::math::Vector3d noise_gps_vel;
+  ignition::math::Vector3d random_walk_gps;
+  ignition::math::Vector3d gravity_W_;
+  ignition::math::Vector3d velocity_prev_W_;
 
   // gps noise parameters
   double std_xy;    // meters
@@ -126,6 +126,6 @@ private:
   static constexpr double gps_z_noise_density = 4e-4;     // (m) / sqrt(hz)
   static constexpr double gps_vxy_noise_density = 2e-1;   // (m/s) / sqrt(hz)
   static constexpr double gps_vz_noise_density = 4e-1;    // (m/s) / sqrt(hz)
-};
-}
-#endif
+};     // class GAZEBO_VISIBLE GpsPlugin
+}      // namespace gazebo
+#endif // _GAZEBO_GPS_PLUGIN_HH_

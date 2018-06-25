@@ -50,12 +50,8 @@ RayPlugin::RayPlugin()
 /////////////////////////////////////////////////
 RayPlugin::~RayPlugin()
 {
-#if GAZEBO_MAJOR_VERSION >= 7
-  this->parentSensor_->LaserShape()->DisconnectNewLaserScans(
-#else
-  this->parentSensor_->GetLaserShape()->DisconnectNewLaserScans(
-#endif
-      this->newLaserScansConnection);
+  this->newLaserScansConnection->~Connection();
+
   this->newLaserScansConnection.reset();
 
   this->parentSensor_.reset();
@@ -129,7 +125,7 @@ void RayPlugin::Load(sensors::SensorPtr _parent, sdf::ElementPtr _sdf)
   boost::split(names_splitted,scopedName,boost::is_any_of("::"));
   string topicName = "~/" + names_splitted[0] + "/link/lidar";
 
-  lidar_pub_ = node_handle_->Advertise<lidar_msgs::msgs::lidar>(topicName, 10);
+  lidar_pub_ = node_handle_->Advertise<sensor_msgs::msgs::Range>(topicName, 10);
 }
 
 /////////////////////////////////////////////////

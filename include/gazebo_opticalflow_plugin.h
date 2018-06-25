@@ -28,7 +28,7 @@
 #include "gazebo/transport/transport.hh"
 #include "gazebo/msgs/msgs.hh"
 
-#include "opticalFlow.pb.h"
+#include "OpticalFlow.pb.h"
 
 #include <opencv2/opencv.hpp>
 #include <iostream>
@@ -64,7 +64,7 @@ namespace gazebo
       event::ConnectionPtr newFrameConnection;
       transport::PublisherPtr opticalFlow_pub_;
       transport::NodePtr node_handle_;
-      opticalFlow_msgs::msgs::opticalFlow opticalFlow_message;
+      sensor_msgs::msgs::OpticalFlow opticalFlow_message;
       std::string namespace_;
       boost::timer::cpu_timer timer_;
       OpticalFlowOpenCV *optical_flow_;

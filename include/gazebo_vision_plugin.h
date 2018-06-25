@@ -36,6 +36,7 @@
  * This plugin simulates VIO data
  *
  * @author Christoph Tobler <christoph@px4.io>
+ * @author Nuno Marques <nuno.marques@dronesolutions.io>
  */
 
 #ifndef _GAZEBO_VISION_PLUGIN_HH_
@@ -51,14 +52,9 @@
 #include <gazebo/transport/transport.hh>
 #include <gazebo/msgs/msgs.hh>
 #include <gazebo/physics/physics.hh>
-#include <gazebo/math/gzmath.hh>
+#include <ignition/math.hh>
 
-#include <odom.pb.h>
-
-#define DEFAULT_PUB_RATE         30       // [Hz]
-#define DEFAULT_CORRELATION_TIME 60.0     // [s]
-#define DEFAULT_RANDOM_WALK       1.0     // [(m/s) / sqrt(hz)]
-#define DEFAULT_NOISE_DENSITY     0.0005  // [(m) / sqrt(hz)]
+#include <Odometry.pb.h>
 
 namespace gazebo
 {
@@ -79,24 +75,30 @@ private:
   physics::WorldPtr _world;
   event::ConnectionPtr _updateConnection;
 
+  nav_msgs::msgs::Odometry odom_msg;
+
   transport::NodePtr _nh;
   transport::PublisherPtr _pub_odom;
 
   common::Time _last_pub_time;
   common::Time _last_time;
 
-  math::Pose _pose_model_start;
+  ignition::math::Pose3d _pose_model_start;
 
-  int _pub_rate;
+  double _pub_rate;
   // vision position estimate noise parameters
-  float _corellation_time;
-  float _random_walk;
-  float _noise_density;
+  double _corellation_time;
+  double _random_walk;
+  double _noise_density;
 
-  math::Vector3 _bias;
+  ignition::math::Vector3d _bias;
 
   std::default_random_engine _rand;
   std::normal_distribution<float> _randn;
+  static constexpr double kDefaultPubRate 		= 30.0;	 // [Hz]
+  static constexpr double kDefaultCorrelationTime	= 60.0;	 // [s]
+  static constexpr double kDefaultRandomWalk		= 1.0;	 // [(m/s) / sqrt(hz)]
+  static constexpr double kDefaultNoiseDensity		= 0.0005;// [(m) / sqrt(hz)]
 
 };     // class GAZEBO_VISIBLE VisionPlugin
 }      // namespace gazebo

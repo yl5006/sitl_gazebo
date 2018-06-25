@@ -5,13 +5,12 @@
     <include>
       <uri>model://sun</uri>
     </include>
-    <!-- A ground plane -->
     <include>
-      <uri>model://iris_opt_flow</uri>
+      <uri>model://iris_fpv_cam</uri>
       <pose>1.01 0.98 0.83 0 0 1.14</pose>
     </include>
     <include>
-      <uri>model://asphalt_plane</uri>
+      <uri>model://uneven_ground</uri>
     </include>
     <physics name='default_physics' default='0' type='ode'>
       <gravity>0 0 -9.8066</gravity>
@@ -40,7 +39,7 @@
         <!-- <view_controller>orbit</view_controller>
         <projection_type>perspective</projection_type>
         <track_visual>
-          <name>iris_opt_flow</name>
+          <name>iris</name>
           <use_model_frame>1</use_model_frame>
         </track_visual> -->
       </camera>

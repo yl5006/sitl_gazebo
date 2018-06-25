@@ -11,9 +11,8 @@
 #include "gazebo/transport/transport.hh"
 #include "gazebo/msgs/msgs.hh"
 #include "gazebo/physics/physics.hh"
-#include "gazebo/math/gzmath.hh"
 
-#include "irlock.pb.h"
+#include "IRLock.pb.h"
 
 #include <iostream>
 
@@ -36,7 +35,7 @@ namespace gazebo
       event::ConnectionPtr updateConnection;
       transport::PublisherPtr irlock_pub_;
       transport::NodePtr node_handle_;
-      irlock_msgs::msgs::irlock irlock_message;
+      sensor_msgs::msgs::IRLock irlock_message;
       std::string namespace_;
 
   };

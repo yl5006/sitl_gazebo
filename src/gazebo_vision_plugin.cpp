@@ -49,7 +49,7 @@ VisionPlugin::VisionPlugin() : ModelPlugin()
 
 VisionPlugin::~VisionPlugin()
 {
-  event::Events::DisconnectWorldUpdateBegin(_updateConnection);
+  _updateConnection->~Connection();
 }
 
 void VisionPlugin::getSdfParams(sdf::ElementPtr sdf)
@@ -61,32 +61,32 @@ void VisionPlugin::getSdfParams(sdf::ElementPtr sdf)
     gzerr << "[gazebo_vision_plugin] Please specify a robotNamespace.\n";
   }
 
-  if (sdf->HasElement("pub_rate")) {
-    _pub_rate = sdf->GetElement("pub_rate")->Get<int>();
+  if (sdf->HasElement("pubRate")) {
+    _pub_rate = sdf->GetElement("pubRate")->Get<int>();
   } else {
-    _pub_rate = DEFAULT_PUB_RATE;
-    gzerr << "[gazebo_vision_plugin] Using default publication rate of " << DEFAULT_PUB_RATE << " Hz\n";
+    _pub_rate = kDefaultPubRate;
+    gzwarn << "[gazebo_vision_plugin] Using default publication rate of " << _pub_rate << " Hz\n";
   }
 
-  if (sdf->HasElement("corellation_time")) {
-    _corellation_time = sdf->GetElement("corellation_time")->Get<float>();
+  if (sdf->HasElement("corellationTime")) {
+    _corellation_time = sdf->GetElement("corellationTime")->Get<float>();
   } else {
-    _corellation_time = DEFAULT_CORRELATION_TIME;
-    gzerr << "[gazebo_vision_plugin] Using default correlation time of " << DEFAULT_CORRELATION_TIME << " s\n";
+    _corellation_time = kDefaultCorrelationTime;
+    gzwarn << "[gazebo_vision_plugin] Using default correlation time of " << _corellation_time << " s\n";
   }
 
-  if (sdf->HasElement("random_walk")) {
-    _random_walk = sdf->GetElement("random_walk")->Get<float>();
+  if (sdf->HasElement("randomWalk")) {
+    _random_walk = sdf->GetElement("randomWalk")->Get<float>();
   } else {
-    _random_walk = DEFAULT_RANDOM_WALK;
-    gzerr << "[gazebo_vision_plugin] Using default random walk of " << DEFAULT_RANDOM_WALK << " (m/s) / sqrt(hz)\n";
+    _random_walk = kDefaultRandomWalk;
+    gzwarn << "[gazebo_vision_plugin] Using default random walk of " << _random_walk << " (m/s) / sqrt(hz)\n";
   }
 
-  if (sdf->HasElement("noise_density")) {
-    _noise_density = sdf->GetElement("noise_density")->Get<float>();
+  if (sdf->HasElement("noiseDensity")) {
+    _noise_density = sdf->GetElement("noiseDensity")->Get<float>();
   } else {
-    _noise_density = DEFAULT_NOISE_DENSITY;
-    gzerr << "[gazebo_vision_plugin] Using default noise density of " << DEFAULT_NOISE_DENSITY << " (m) / sqrt(hz)\n";
+    _noise_density = kDefaultNoiseDensity;
+    gzwarn << "[gazebo_vision_plugin] Using default noise density of " << _noise_density << " (m) / sqrt(hz)\n";
   }
 }
 
@@ -98,11 +98,17 @@ void VisionPlugin::Load(physics::ModelPtr model, sdf::ElementPtr sdf)
   _model = model;
 
   _world = _model->GetWorld();
+#if GAZEBO_MAJOR_VERSION >= 9
+  _last_time = _world->SimTime();
+  _last_pub_time = _world->SimTime();
+  // remember start pose -> VIO should always start with zero
+  _pose_model_start = _model->WorldPose();
+#else
   _last_time = _world->GetSimTime();
   _last_pub_time = _world->GetSimTime();
-
   // remember start pose -> VIO should always start with zero
-  _pose_model_start = _model->GetWorldPose();
+  _pose_model_start = ignitionFromGazeboMath(_model->GetWorldPose());
+#endif
 
   _nh = transport::NodePtr(new transport::Node());
   _nh->Init(_namespace);
@@ -111,53 +117,117 @@ void VisionPlugin::Load(physics::ModelPtr model, sdf::ElementPtr sdf)
   _updateConnection = event::Events::ConnectWorldUpdateBegin(
       boost::bind(&VisionPlugin::OnUpdate, this, _1));
 
-  _pub_odom = _nh->Advertise<odom_msgs::msgs::odom>("~/" + _model->GetName() + "/vision_odom", 10);
+  _pub_odom = _nh->Advertise<nav_msgs::msgs::Odometry>("~/" + _model->GetName() + "/vision_odom", 10);
 }
 
 void VisionPlugin::OnUpdate(const common::UpdateInfo&)
 {
+#if GAZEBO_MAJOR_VERSION >= 9
+  common::Time current_time = _world->SimTime();
+#else
   common::Time current_time = _world->GetSimTime();
+#endif
   double dt = (current_time - _last_pub_time).Double();
 
   if (dt > 1.0 / _pub_rate) {
 
     // get pose of the model that the plugin is attached to
-    math::Pose pose_model_world = _model->GetWorldPose();
-    math::Pose pose_model; // pose in local frame (relative to where it started)
-    // convert to local frame (ENU)
-    pose_model.pos.x = cos(_pose_model_start.rot.GetYaw()) * (pose_model_world.pos.y - _pose_model_start.pos.y) -
-                       sin(_pose_model_start.rot.GetYaw()) * (pose_model_world.pos.x - _pose_model_start.pos.x);
-    pose_model.pos.y = cos(_pose_model_start.rot.GetYaw()) * (pose_model_world.pos.x - _pose_model_start.pos.x) +
-                       sin(_pose_model_start.rot.GetYaw()) * (pose_model_world.pos.y - _pose_model_start.pos.y);
-    pose_model.pos.z = pose_model_world.pos.z - _pose_model_start.pos.z;
-    pose_model.rot.SetFromEuler(pose_model_world.rot.GetPitch(),
-                                pose_model_world.rot.GetRoll(),
-                                pose_model_world.rot.GetYaw() - _pose_model_start.rot.GetYaw());
+#if GAZEBO_MAJOR_VERSION >= 9
+    ignition::math::Pose3d pose_model_world = _model->WorldPose();
+    ignition::math::Vector3d velocity_model_world = _model->WorldLinearVel();
+    ignition::math::Vector3d angular_velocity_model = _model->RelativeAngularVel();
+#else
+    ignition::math::Pose3d pose_model_world = ignitionFromGazeboMath(_model->GetWorldPose());
+    ignition::math::Vector3d velocity_model_world = ignitionFromGazeboMath(_model->GetWorldLinearVel());
+    ignition::math::Vector3d angular_velocity_model = ignitionFromGazeboMath(_model->GetRelativeAngularVel());
+#endif
+    ignition::math::Pose3d pose_model; // pose in local frame (relative to where it started)
+    pose_model.Pos().X() = pose_model_world.Pos().X() - _pose_model_start.Pos().X();
+    pose_model.Pos().Y() = pose_model_world.Pos().Y() - _pose_model_start.Pos().Y();
+    pose_model.Pos().Z() = pose_model_world.Pos().Z() - _pose_model_start.Pos().Z();
+    pose_model.Rot().Euler(pose_model_world.Rot().Roll(),
+                           pose_model_world.Rot().Pitch(),
+                           pose_model_world.Rot().Yaw() - _pose_model_start.Rot().Yaw());
 
     // update noise parameters
-    math::Vector3 noise;
-    math::Vector3 random_walk;
-    noise.x = _noise_density * sqrt(dt) * _randn(_rand);
-    noise.y = _noise_density * sqrt(dt) * _randn(_rand);
-    noise.z = _noise_density * sqrt(dt) * _randn(_rand);
-    random_walk.x = _random_walk * sqrt(dt) * _randn(_rand);
-    random_walk.y = _random_walk * sqrt(dt) * _randn(_rand);
-    random_walk.z = _random_walk * sqrt(dt) * _randn(_rand);
+    ignition::math::Vector3d noise_pos;
+    ignition::math::Vector3d noise_linvel;
+    ignition::math::Vector3d noise_angvel;
+
+    // position noise model
+    noise_pos.X() = _noise_density * sqrt(dt) * _randn(_rand);
+    noise_pos.Y() = _noise_density * sqrt(dt) * _randn(_rand);
+    noise_pos.Z() = _noise_density * sqrt(dt) * _randn(_rand);
+
+    // velocity noise model
+    noise_linvel.X() = _noise_density * sqrt(dt) * _randn(_rand);
+    noise_linvel.Y() = _noise_density * sqrt(dt) * _randn(_rand);
+    noise_linvel.Z() = _noise_density * sqrt(dt) * _randn(_rand);
+
+    // angular rates noise model
+    double tau_g = _corellation_time;
+    double sigma_g_d = 1 / sqrt(dt) * _noise_density;
+    double sigma_b_g = _random_walk;
+    double sigma_b_g_d = sqrt(-sigma_b_g * sigma_b_g * tau_g / 2.0 * (exp(-2.0 * dt / tau_g) - 1.0));
+    double phi_g_d = exp(-1.0 / tau_g * dt);
+
+    noise_angvel.X() = phi_g_d * noise_angvel.X() + sigma_b_g_d * sqrt(dt) * _randn(_rand);
+    noise_angvel.Y() = phi_g_d * noise_angvel.Y() + sigma_b_g_d * sqrt(dt) * _randn(_rand);
+    noise_angvel.Z() = phi_g_d * noise_angvel.Z() + sigma_b_g_d * sqrt(dt) * _randn(_rand);
+
+    // random walk generation
+    ignition::math::Vector3d random_walk;
+    random_walk.X() = _random_walk * sqrt(dt) * _randn(_rand);
+    random_walk.Y() = _random_walk * sqrt(dt) * _randn(_rand);
+    random_walk.Z() = _random_walk * sqrt(dt) * _randn(_rand);
 
     // bias integration
-    _bias.x += random_walk.x * dt - _bias.x / _corellation_time;
-    _bias.y += random_walk.y * dt - _bias.y / _corellation_time;
-    _bias.z += random_walk.z * dt - _bias.z / _corellation_time;
+    _bias.X() += random_walk.X() * dt - _bias.X() / _corellation_time;
+    _bias.Y() += random_walk.Y() * dt - _bias.Y() / _corellation_time;
+    _bias.Z() += random_walk.Z() * dt - _bias.Z() / _corellation_time;
 
     // Fill odom msg
-    odom_msgs::msgs::odom odom_msg;
     odom_msg.set_usec(current_time.Double() * 1e6);
-    odom_msg.set_x(pose_model.pos.x + noise.x + _bias.x);
-    odom_msg.set_y(pose_model.pos.y + noise.y + _bias.y);
-    odom_msg.set_z(pose_model.pos.z + noise.z + _bias.z);
-    odom_msg.set_roll(pose_model.rot.GetRoll());
-    odom_msg.set_pitch(pose_model.rot.GetPitch());
-    odom_msg.set_yaw(pose_model.rot.GetYaw());
+
+    gazebo::msgs::Vector3d* position = new gazebo::msgs::Vector3d();
+    position->set_x(pose_model.Pos().X() + noise_pos.X() + _bias.X());
+    position->set_y(pose_model.Pos().Y() + noise_pos.Y() + _bias.Y());
+    position->set_z(pose_model.Pos().Z() + noise_pos.Z() + _bias.Z());
+    odom_msg.set_allocated_position(position);
+
+    ignition::math::Quaterniond pose_model_quaternion = pose_model.Rot();
+    gazebo::msgs::Quaternion* orientation = new gazebo::msgs::Quaternion();
+    orientation->set_x(pose_model_quaternion.X());
+    orientation->set_y(pose_model_quaternion.Y());
+    orientation->set_z(pose_model_quaternion.Z());
+    orientation->set_w(pose_model_quaternion.W());
+    odom_msg.set_allocated_orientation(orientation);
+
+    gazebo::msgs::Vector3d* linear_velocity = new gazebo::msgs::Vector3d();
+    linear_velocity->set_x(velocity_model_world.X() + noise_linvel.X() + _bias.X());
+    linear_velocity->set_y(velocity_model_world.Y() + noise_linvel.Y() + _bias.Y());
+    linear_velocity->set_z(velocity_model_world.Z() + noise_linvel.Z() + _bias.Z());
+    odom_msg.set_allocated_linear_velocity(linear_velocity);
+
+    gazebo::msgs::Vector3d* angular_velocity = new gazebo::msgs::Vector3d();
+    angular_velocity->set_x(angular_velocity_model.X() + noise_angvel.X());
+    angular_velocity->set_y(angular_velocity_model.Y() + noise_angvel.Y());
+    angular_velocity->set_z(angular_velocity_model.Z() + noise_angvel.Z());
+    odom_msg.set_allocated_angular_velocity(angular_velocity);
+
+    for (int i = 0; i < 36; i++){
+      switch (i){
+        // principal diagonal = the variance of the random variables
+        // = noise_density²
+        case 0: case 7: case 14: case 21: case 28: case 35:
+          odom_msg.add_pose_covariance(_noise_density * _noise_density);
+          odom_msg.add_twist_covariance(_noise_density * _noise_density);
+          break;
+        default:
+          odom_msg.add_pose_covariance(0.0);
+          odom_msg.add_twist_covariance(0.0);
+      }
+    }
 
     _last_pub_time = current_time;
 
@@ -165,5 +235,4 @@ void VisionPlugin::OnUpdate(const common::UpdateInfo&)
     _pub_odom->Publish(odom_msg);
   }
 }
-
 } // namespace gazebo

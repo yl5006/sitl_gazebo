@@ -28,10 +28,10 @@ GZ_REGISTER_MODEL_PLUGIN(GimbalControllerPlugin)
 GimbalControllerPlugin::GimbalControllerPlugin()
   :status("closed")
 {
-  /// TODO: make these gains part of sdf xml
-  this->pitchPid.Init(5, 0, 0, 0, 0, 0.3, -0.3);
-  this->rollPid.Init(5, 0, 0, 0, 0, 0.3, -0.3);
-  this->yawPid.Init(1.0, 0, 0, 0, 0, 1.0, -1.0);
+  /// defaults if sdf xml doesn't contain any pid gains
+  this->pitchPid.Init(kPIDPitchP, kPIDPitchI, kPIDPitchD, kPIDPitchIMax, kPIDPitchIMin, kPIDPitchCmdMax, kPIDPitchCmdMin);
+  this->rollPid.Init(kPIDRollP, kPIDRollI, kPIDRollD, kPIDRollIMax, kPIDRollIMin, kPIDRollCmdMax, kPIDRollCmdMin);
+  this->yawPid.Init(kPIDYawP, kPIDYawI, kPIDYawD, kPIDYawIMax, kPIDYawIMin, kPIDYawCmdMax, kPIDYawCmdMin);
   this->pitchCommand = 0.5* M_PI;
   this->rollCommand = 0;
   this->yawCommand = 0;
@@ -46,6 +46,57 @@ void GimbalControllerPlugin::Load(physics::ModelPtr _model,
 
   this->sdf = _sdf;
 
+  // Create axis name -> pid map. It may be empty or not fully defined
+  std::map<std::string, common::PID> pids_;
+
+  if (_sdf->HasElement("control_gimbal_channels"))
+  {
+    sdf::ElementPtr control_channels = _sdf->GetElement("control_gimbal_channels");
+    sdf::ElementPtr channel = control_channels->GetElement("channel");
+    while(channel)
+    {
+      if (channel->HasElement("joint_axis"))
+      {
+        std::string joint_axis = channel->Get<std::string>("joint_axis");
+
+        // setup joint control pid to control joint
+        if (channel->HasElement("joint_control_pid"))
+        {
+          sdf::ElementPtr pid = channel->GetElement("joint_control_pid");
+          double p = 0;
+          if (pid->HasElement("p"))
+            p = pid->Get<double>("p");
+          double i = 0;
+          if (pid->HasElement("i"))
+            i = pid->Get<double>("i");
+          double d = 0;
+          if (pid->HasElement("d"))
+            d = pid->Get<double>("d");
+          double iMax = 0;
+          if (pid->HasElement("iMax"))
+            iMax = pid->Get<double>("iMax");
+          double iMin = 0;
+          if (pid->HasElement("iMin"))
+            iMin = pid->Get<double>("iMin");
+          double cmdMax = 0;
+          if (pid->HasElement("cmdMax"))
+            cmdMax = pid->Get<double>("cmdMax");
+          double cmdMin = 0;
+          if (pid->HasElement("cmdMin"))
+            cmdMin = pid->Get<double>("cmdMin");
+
+          // insert pid gains into map for the respective named joint axis
+          pids_.insert(std::pair<std::string, common::PID>(joint_axis, common::PID(p, i, d, iMax, iMin, cmdMax, cmdMin)));
+        }
+        channel = channel->GetNextElement("channel");
+      }
+    }
+  }
+  else
+  {
+    gzwarn << "Control channels for gimbal not found. Using default pid gains\n";
+  }
+
   std::string yawJointName = "cgo3_vertical_arm_joint";
   this->yawJoint = this->model->GetJoint(yawJointName);
   if (this->sdf->HasElement("joint_yaw"))
@@ -55,6 +106,19 @@ void GimbalControllerPlugin::Load(physics::ModelPtr _model,
     if (this->model->GetJoint(yawJointName))
     {
       this->yawJoint = this->model->GetJoint(yawJointName);
+
+      // Try to find respective pid for the named axis control
+      std::map<std::string, common::PID>::iterator it = pids_.find("joint_yaw");
+      if(it != pids_.end()) {
+        // Found pid for this axis (and therefore for this joint)
+        this->yawPid = it->second;
+      }
+      else
+      {
+        // If user defines control channels for gimbal but don't define yaw gains explicitly
+        // then display warning
+        gzwarn << "joint_yaw [" << yawJointName << "] pid control gains do not defined?\n";
+      }
     }
     else
     {
@@ -76,6 +140,19 @@ void GimbalControllerPlugin::Load(physics::ModelPtr _model,
     if (this->model->GetJoint(rollJointName))
     {
       this->rollJoint = this->model->GetJoint(rollJointName);
+
+      // Try to find respective pid for the named axis control
+      std::map<std::string, common::PID>::iterator it = pids_.find("joint_roll");
+      if(it != pids_.end()) {
+        // Found pid for this axis (and therefore for this joint)
+        this->rollPid = it->second;
+      }
+      else
+      {
+        // If user defines control channels for gimbal but don't define roll gains explicitly
+        // then display warning
+        gzwarn << "joint_roll [" << rollJointName << "] pid control gains do not defined?\n";
+      }
     }
     else
     {
@@ -88,7 +165,6 @@ void GimbalControllerPlugin::Load(physics::ModelPtr _model,
           << rollJointName << "' " << endl;
   }
 
-
   std::string pitchJointName = "cgo3_camera_joint";
   this->pitchJoint = this->model->GetJoint(pitchJointName);
   if (this->sdf->HasElement("joint_pitch"))
@@ -98,6 +174,19 @@ void GimbalControllerPlugin::Load(physics::ModelPtr _model,
     if (this->model->GetJoint(pitchJointName))
     {
       this->pitchJoint = this->model->GetJoint(pitchJointName);
+
+      // Try to find respective pid for the named axis
+      std::map<std::string, common::PID>::iterator it = pids_.find("joint_pitch");
+      if(it != pids_.end()) {
+        // Found pid for this axis (and therefore for this joint)
+        this->pitchPid = it->second;
+      }
+      else
+      {
+        // If user defines control channels for gimbal but don't define pitch gains explicitly
+        // then display warning
+        gzwarn << "joint_pitch [" << pitchJointName << "] pid control gains do not defined?\n";
+      }
     }
     else
     {
@@ -109,7 +198,6 @@ void GimbalControllerPlugin::Load(physics::ModelPtr _model,
     gzerr << "GimbalControllerPlugin::Load ERROR! Can't get pitch joint '"
           << pitchJointName << "' " << endl;
   }
-
 
   // get imu sensors
   std::string cameraImuSensorName = "camera_imu";
@@ -136,9 +224,13 @@ void GimbalControllerPlugin::Load(physics::ModelPtr _model,
 void GimbalControllerPlugin::Init()
 {
   this->node = transport::NodePtr(new transport::Node());
+#if GAZEBO_MAJOR_VERSION >= 9
+  this->node->Init(this->model->GetWorld()->Name());
+  this->lastUpdateTime = this->model->GetWorld()->SimTime();
+#else
   this->node->Init(this->model->GetWorld()->GetName());
-
   this->lastUpdateTime = this->model->GetWorld()->GetSimTime();
+#endif
 
   // receive pitch command via gz transport
   std::string pitchTopic = std::string("~/") +  this->model->GetName() +
@@ -280,7 +372,11 @@ void GimbalControllerPlugin::OnUpdate()
   if (!this->pitchJoint || !this->rollJoint || !this->yawJoint)
     return;
 
+#if GAZEBO_MAJOR_VERSION >= 9
+  common::Time time = this->model->GetWorld()->SimTime();
+#else
   common::Time time = this->model->GetWorld()->GetSimTime();
+#endif
   if (time < this->lastUpdateTime)
   {
     gzerr << "time reset event\n";
@@ -302,6 +398,17 @@ void GimbalControllerPlugin::OnUpdate()
     this->yawCommand += this->lastImuYaw;
 
     // truncate command inside joint angle limits
+#if GAZEBO_MAJOR_VERSION >= 9
+    double rollLimited = ignition::math::clamp(this->rollCommand,
+      rDir*this->rollJoint->UpperLimit(0),
+	  rDir*this->rollJoint->LowerLimit(0));
+    double pitchLimited = ignition::math::clamp(this->pitchCommand,
+      pDir*this->pitchJoint->UpperLimit(0),
+      pDir*this->pitchJoint->LowerLimit(0));
+    double yawLimited = ignition::math::clamp(this->yawCommand,
+      yDir*this->yawJoint->LowerLimit(0),
+	  yDir*this->yawJoint->UpperLimit(0));
+#else
     double rollLimited = ignition::math::clamp(this->rollCommand,
       rDir*this->rollJoint->GetUpperLimit(0).Radian(),
 	  rDir*this->rollJoint->GetLowerLimit(0).Radian());
@@ -311,6 +418,7 @@ void GimbalControllerPlugin::OnUpdate()
     double yawLimited = ignition::math::clamp(this->yawCommand,
       yDir*this->yawJoint->GetLowerLimit(0).Radian(),
 	  yDir*this->yawJoint->GetUpperLimit(0).Radian());
+#endif
 
     /// currentAngleYPRVariable is defined in roll-pitch-yaw-fixed-axis
     /// and gimbal is constructed using yaw-roll-pitch-variable-axis
@@ -327,6 +435,16 @@ void GimbalControllerPlugin::OnUpdate()
 
     /// get joint limits (in sensor frame)
     /// TODO: move to Load() if limits do not change
+#if GAZEBO_MAJOR_VERSION >= 9
+    ignition::math::Vector3d lowerLimitsPRY
+      (pDir*this->pitchJoint->LowerLimit(0),
+       rDir*this->rollJoint->LowerLimit(0),
+       yDir*this->yawJoint->LowerLimit(0));
+    ignition::math::Vector3d upperLimitsPRY
+      (pDir*this->pitchJoint->UpperLimit(0),
+       rDir*this->rollJoint->UpperLimit(0),
+       yDir*this->yawJoint->UpperLimit(0));
+#else
     ignition::math::Vector3d lowerLimitsPRY
       (pDir*this->pitchJoint->GetLowerLimit(0).Radian(),
        rDir*this->rollJoint->GetLowerLimit(0).Radian(),
@@ -335,6 +453,7 @@ void GimbalControllerPlugin::OnUpdate()
       (pDir*this->pitchJoint->GetUpperLimit(0).Radian(),
        rDir*this->rollJoint->GetUpperLimit(0).Radian(),
        yDir*this->yawJoint->GetUpperLimit(0).Radian());
+#endif
 
     // normalize errors
     double pitchError = this->ShortestAngularDistance(
@@ -417,7 +536,19 @@ void GimbalControllerPlugin::OnUpdate()
   if (++i>100)
   {
     i = 0;
-#if GAZEBO_MAJOR_VERSION >= 7 && GAZEBO_MINOR_VERSION >= 4
+#if GAZEBO_MAJOR_VERSION >= 9
+    gazebo::msgs::Any m;
+    m.set_type(gazebo::msgs::Any_ValueType_DOUBLE);
+
+    m.set_double_value(this->pitchJoint->Position(0));
+    this->pitchPub->Publish(m);
+
+    m.set_double_value(this->rollJoint->Position(0));
+    this->rollPub->Publish(m);
+
+    m.set_double_value(this->yawJoint->Position(0));
+    this->yawPub->Publish(m);
+#elif GAZEBO_MAJOR_VERSION >= 7 && GAZEBO_MINOR_VERSION >= 4
     gazebo::msgs::Any m;
     m.set_type(gazebo::msgs::Any_ValueType_DOUBLE);
 

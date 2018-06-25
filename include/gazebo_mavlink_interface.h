@@ -4,7 +4,7 @@
  * Copyright 2015 Mina Kamel, ASL, ETH Zurich, Switzerland
  * Copyright 2015 Janosch Nikolic, ASL, ETH Zurich, Switzerland
  * Copyright 2015 Markus Achtelik, ASL, ETH Zurich, Switzerland
- * Copyright 2015-2017 PX4 Pro Development Team
+ * Copyright 2015-2018 PX4 Pro Development Team
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -45,25 +45,24 @@
 #include <Eigen/Eigen>
 
 #include <gazebo/gazebo.hh>
-#include <gazebo/math/Vector3.hh>
 #include <gazebo/common/common.hh>
 #include <gazebo/common/Plugin.hh>
 #include <gazebo/physics/physics.hh>
 #include <gazebo/transport/transport.hh>
 #include <gazebo/msgs/msgs.hh>
 
+#include <ignition/math.hh>
 #include <sdf/sdf.hh>
 #include <common.h>
 #include <CommandMotorSpeed.pb.h>
 #include <MotorSpeed.pb.h>
-#include <SensorImu.pb.h>
-#include <opticalFlow.pb.h>
-#include <lidar.pb.h>
-#include <sonarSens.pb.h>
+#include <Imu.pb.h>
+#include <OpticalFlow.pb.h>
+#include <Range.pb.h>
 #include <SITLGps.pb.h>
-#include <irlock.pb.h>
+#include <IRLock.pb.h>
 #include <Groundtruth.pb.h>
-#include <odom.pb.h>
+#include <Odometry.pb.h>
 
 #include <mavlink/v2.0/common/mavlink.h>
 #include "msgbuffer.h"
@@ -82,15 +81,16 @@ static constexpr ssize_t MAX_SIZE = MAVLINK_MAX_PACKET_LEN + 16;
 static constexpr size_t MAX_TXQ_SIZE = 1000;
 
 namespace gazebo {
+
 typedef const boost::shared_ptr<const mav_msgs::msgs::CommandMotorSpeed> CommandMotorSpeedPtr;
+typedef const boost::shared_ptr<const nav_msgs::msgs::Odometry> OdomPtr;
+typedef const boost::shared_ptr<const sensor_msgs::msgs::Groundtruth> GtPtr;
 typedef const boost::shared_ptr<const sensor_msgs::msgs::Imu> ImuPtr;
-typedef const boost::shared_ptr<const lidar_msgs::msgs::lidar> LidarPtr;
-typedef const boost::shared_ptr<const opticalFlow_msgs::msgs::opticalFlow> OpticalFlowPtr;
-typedef const boost::shared_ptr<const sonarSens_msgs::msgs::sonarSens> SonarSensPtr;
-typedef const boost::shared_ptr<const irlock_msgs::msgs::irlock> IRLockPtr;
-typedef const boost::shared_ptr<const gps_msgs::msgs::SITLGps> GpsPtr;
-typedef const boost::shared_ptr<const gps_msgs::msgs::Groundtruth> GtPtr;
-typedef const boost::shared_ptr<const odom_msgs::msgs::odom> OdomPtr;
+typedef const boost::shared_ptr<const sensor_msgs::msgs::IRLock> IRLockPtr;
+typedef const boost::shared_ptr<const sensor_msgs::msgs::OpticalFlow> OpticalFlowPtr;
+typedef const boost::shared_ptr<const sensor_msgs::msgs::Range> SonarPtr;
+typedef const boost::shared_ptr<const sensor_msgs::msgs::Range> LidarPtr;
+typedef const boost::shared_ptr<const sensor_msgs::msgs::SITLGps> GpsPtr;
 
 // Default values
 static const std::string kDefaultNamespace = "";
@@ -120,12 +120,14 @@ public:
   GazeboMavlinkInterface() : ModelPlugin(),
     received_first_referenc_(false),
     namespace_(kDefaultNamespace),
+    protocol_version_(2.0),
     motor_velocity_reference_pub_topic_(kDefaultMotorVelocityReferencePubTopic),
     use_propeller_pid_(false),
     use_elevator_pid_(false),
     use_left_elevon_pid_(false),
     use_right_elevon_pid_(false),
     vehicle_is_tailsitter_(false),
+    send_odometry_(true),
     imu_sub_topic_(kDefaultImuTopic),
     opticalFlow_sub_topic_(kDefaultOpticalFlowTopic),
     lidar_sub_topic_(kDefaultLidarTopic),
@@ -177,6 +179,8 @@ private:
   bool received_first_referenc_;
   Eigen::VectorXd input_reference_;
 
+  float protocol_version_;
+
   std::string namespace_;
   std::string motor_velocity_reference_pub_topic_;
   std::string mavlink_control_sub_topic_;
@@ -206,6 +210,8 @@ private:
 
   bool vehicle_is_tailsitter_;
 
+  bool send_odometry_;
+
   std::vector<physics::JointPtr> joints_;
   std::vector<common::PID> pids_;
 
@@ -218,7 +224,7 @@ private:
   void GpsCallback(GpsPtr& gps_msg);
   void GroundtruthCallback(GtPtr& groundtruth_msg);
   void LidarCallback(LidarPtr& lidar_msg);
-  void SonarCallback(SonarSensPtr& sonar_msg);
+  void SonarCallback(SonarPtr& sonar_msg);
   void OpticalFlowCallback(OpticalFlowPtr& opticalFlow_msg);
   void IRLockCallback(IRLockPtr& irlock_msg);
   void VisionCallback(OdomPtr& odom_msg);
@@ -280,9 +286,9 @@ private:
 
   void handle_control(double _dt);
 
-  math::Vector3 gravity_W_;
-  math::Vector3 velocity_prev_W_;
-  math::Vector3 mag_d_;
+  ignition::math::Vector3d gravity_W_;
+  ignition::math::Vector3d velocity_prev_W_;
+  ignition::math::Vector3d mag_d_;
 
   std::default_random_engine rand_;
   std::normal_distribution<float> randn_;
@@ -297,7 +303,7 @@ private:
   struct sockaddr_in _srcaddr_2;  ///< MAVROS
 
   //so we dont have to do extra callbacks
-  math::Vector3 optflow_gyro {};
+  ignition::math::Vector3d optflow_gyro {};
   double optflow_distance;
   double sonar_distance;
 

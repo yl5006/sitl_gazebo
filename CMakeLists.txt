@@ -52,9 +52,6 @@ set( OpticalFlow_LIBS "OpticalFlow" )
 
 # for ROS subscribers and publishers
 if (BUILD_ROS_INTERFACE)
-  find_package(mavros REQUIRED)
-  find_package(mavros_msgs REQUIRED)
-  find_package(mav_msgs REQUIRED)
   find_package(geometry_msgs REQUIRED)
   find_package(roscpp REQUIRED)
   find_package(sensor_msgs REQUIRED)
@@ -320,26 +317,15 @@ if (BUILD_ROS_INTERFACE)
 
   include_directories(
     include
-    ${mavros_msgs_INCLUDE_DIRS}
     ${geometry_msgs_INCLUDE_DIRS}
     ${sensor_msgs_INCLUDE_DIRS}
-    ${mav_msgs_INCLUDE_DIRS}
-    )
-  add_executable(gazebo_motor_failure_plugin
-    src/gazebo_motor_failure_plugin.cpp
-  )
-
-  add_dependencies(gazebo_motor_failure_plugin
-    ${catkin_EXPORTED_TARGETS}
-    ${mavros_EXPORTED_TARGETS}
-    ${mavros_msgs_EXPORTED_TARGETS}
   )
 
   target_link_libraries(gazebo_motor_failure_plugin
     ${catkin_LIBRARIES}
-    ${mavros_LIBRARIES}
+    ${roscpp_LIBRARIES}
+    ${GAZEBO_libraries}
   )
-  message(STATUS "adding gazebo_motor_failure_plugin to build")
 endif()
 
 if (GSTREAMER_FOUND)

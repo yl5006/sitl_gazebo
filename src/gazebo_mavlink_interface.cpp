@@ -418,13 +418,6 @@ void GazeboMavlinkInterface::send_mavlink_message(const mavlink_message_t *messa
     uint8_t buffer[MAVLINK_MAX_PACKET_LEN];
     int packetlen = mavlink_msg_to_send_buffer(buffer, message);
 
-    struct sockaddr_in dest_addr;
-    memcpy(&dest_addr, &_srcaddr, sizeof(_srcaddr));
-
-    if (destination_port != 0) {
-      dest_addr.sin_port = htons(destination_port);
-    }
-
     ssize_t len = sendto(_fd, buffer, packetlen, 0, (struct sockaddr *)&_srcaddr, sizeof(_srcaddr));
 
     if (len <= 0) {
@@ -516,19 +509,26 @@ void GazeboMavlinkInterface::ImuCallback(ImuPtr& imu_message) {
     sensor_msg.abs_pressure = pressure_msl / pressure_ratio;
 
     // generate Gaussian noise sequence using polar form of Box-Muller transformation
-    // http://www.design.caltech.edu/erik/Misc/Gaussian.html
-    double x1, x2, w, y1, y2;
-    do {
-     x1 = 2.0 * (rand() * (1.0 / (double)RAND_MAX)) - 1.0;
-     x2 = 2.0 * (rand() * (1.0 / (double)RAND_MAX)) - 1.0;
-     w = x1 * x1 + x2 * x2;
-    } while ( w >= 1.0 );
-    w = sqrt( (-2.0 * log( w ) ) / w );
-    y1 = x1 * w;
-    y2 = x2 * w;
+    double x1, x2, w, y1;
+    if (!baro_rnd_use_last_) {
+      do {
+	x1 = 2.0 * ((double)rand() / (double)RAND_MAX) - 1.0;
+	x2 = 2.0 * ((double)rand() / (double)RAND_MAX) - 1.0;
+	w = x1 * x1 + x2 * x2;
+      } while ( w >= 1.0 );
+      w = sqrt( (-2.0 * log( w ) ) / w );
+      // calculate two values - the second value can be used next time because it is uncorrelated
+      y1 = x1 * w;
+      baro_rnd_y2_ = x2 * w;
+      baro_rnd_use_last_ = true;
+    } else {
+      // no need to repeat the calculation - use the second value from last update
+      y1 = baro_rnd_y2_;
+      baro_rnd_use_last_ = false;
+    }
 
     // Apply 1 Pa RMS noise
-    float abs_pressure_noise = 1.0f * (float)w;
+    float abs_pressure_noise = 1.0f * (float)y1;
     sensor_msg.abs_pressure += abs_pressure_noise;
 
     // convert to hPa
@@ -883,25 +883,6 @@ void GazeboMavlinkInterface::VisionCallback(OdomPtr& odom_message) {
     send_mavlink_message(&msg);
   }
 }
-
-/*ssize_t GazeboMavlinkInterface::receive(void *_buf, const size_t _size, uint32_t _timeoutMs)
-   {
-   fd_set fds;
-   struct timeval tv;
-
-   FD_ZERO(&fds);
-   FD_SET(this->handle, &fds);
-
-   tv.tv_sec = _timeoutMs / 1000;
-   tv.tv_usec = (_timeoutMs % 1000) * 1000UL;
-
-   if (select(this->handle+1, &fds, NULL, NULL, &tv) != 1)
-   {
-      return -1;
-   }
-
-   return recv(this->handle, _buf, _size, 0);
-   }*/
 
 void GazeboMavlinkInterface::pollForMAVLinkMessages(double _dt, uint32_t _timeoutMs)
 {

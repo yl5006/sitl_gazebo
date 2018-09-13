@@ -61,6 +61,11 @@ namespace gazebo
   static double kPIDYawCmdMax = 1.0;
   static double kPIDYawCmdMin = -1.0;
 
+  // Default rotation directions
+  static double kRollDir = -1.0;
+  static double kPitchDir = -1.0;
+  static double kYawDir = 1.0;
+
   typedef const boost::shared_ptr<const sensor_msgs::msgs::Imu> ImuPtr;
 
   class GAZEBO_VISIBLE GimbalControllerPlugin : public ModelPlugin
@@ -130,6 +135,10 @@ namespace gazebo
     private: double lastImuYaw;
 
     private: std::string status;
+
+    private: double rDir;
+    private: double pDir;
+    private: double yDir;
 
     private: double pitchCommand;
     private: double yawCommand;

@@ -25,9 +25,8 @@
 namespace gazebo {
 
 GazeboWindPlugin::~GazeboWindPlugin() {
-  event::Events::DisconnectWorldUpdateBegin(update_connection_);
+  update_connection_->~Connection();
 }
-;
 
 void GazeboWindPlugin::Load(physics::ModelPtr _model, sdf::ElementPtr _sdf) {
   // Store the pointer to the model.
@@ -45,7 +44,7 @@ void GazeboWindPlugin::Load(physics::ModelPtr _model, sdf::ElementPtr _sdf) {
   node_handle_->Init(namespace_);
 
   if (_sdf->HasElement("xyzOffset"))
-    xyz_offset_ = _sdf->GetElement("xyzOffset")->Get<math::Vector3>();
+    xyz_offset_ = _sdf->GetElement("xyzOffset")->Get<ignition::math::Vector3d>();
   else
     gzerr << "[gazebo_wind_plugin] Please specify a xyzOffset.\n";
 
@@ -55,13 +54,13 @@ void GazeboWindPlugin::Load(physics::ModelPtr _model, sdf::ElementPtr _sdf) {
   // Get the wind params from SDF.
   getSdfParam<double>(_sdf, "windForceMean", wind_force_mean_, wind_force_mean_);
   getSdfParam<double>(_sdf, "windForceVariance", wind_force_variance_, wind_force_variance_);
-  getSdfParam<math::Vector3>(_sdf, "windDirection", wind_direction_, wind_direction_);
+  getSdfParam<ignition::math::Vector3d>(_sdf, "windDirection", wind_direction_, wind_direction_);
   // Get the wind gust params from SDF.
   getSdfParam<double>(_sdf, "windGustStart", wind_gust_start, wind_gust_start);
   getSdfParam<double>(_sdf, "windGustDuration", wind_gust_duration, wind_gust_duration);
   getSdfParam<double>(_sdf, "windGustForceMean", wind_gust_force_mean_, wind_gust_force_mean_);
   getSdfParam<double>(_sdf, "windGustForceVariance", wind_gust_force_variance_, wind_gust_force_variance_);
-  getSdfParam<math::Vector3>(_sdf, "windGustDirection", wind_gust_direction_, wind_gust_direction_);
+  getSdfParam<ignition::math::Vector3d>(_sdf, "windGustDirection", wind_gust_direction_, wind_gust_direction_);
 
   wind_direction_.Normalize();
   wind_gust_direction_.Normalize();
@@ -83,15 +82,19 @@ void GazeboWindPlugin::Load(physics::ModelPtr _model, sdf::ElementPtr _sdf) {
 // This gets called by the world update start event.
 void GazeboWindPlugin::OnUpdate(const common::UpdateInfo& _info) {
   // Get the current simulation time.
+#if GAZEBO_MAJOR_VERSION >= 9
+  common::Time now = world_->SimTime();
+#else
   common::Time now = world_->GetSimTime();
+#endif
 
   // Calculate the wind force.
   double wind_strength = wind_force_mean_;
-  math::Vector3 wind = wind_strength * wind_direction_;
+  ignition::math::Vector3d wind = wind_strength * wind_direction_;
   // Apply a force from the constant wind to the link.
   link_->AddForceAtRelativePosition(wind, xyz_offset_);
 
-  math::Vector3 wind_gust(0, 0, 0);
+  ignition::math::Vector3d wind_gust(0, 0, 0);
   // Calculate the wind gust force.
   if (now >= wind_gust_start_ && now < wind_gust_end_) {
     double wind_gust_strength = wind_gust_force_mean_;
@@ -101,12 +104,12 @@ void GazeboWindPlugin::OnUpdate(const common::UpdateInfo& _info) {
   }
 
   gazebo::msgs::Vector3d* force = new gazebo::msgs::Vector3d();
-  force->set_x(wind.x + wind_gust.x);
-  force->set_y(wind.y + wind_gust.y);
-  force->set_z(wind.z + wind_gust.z);
+  force->set_x(wind.X() + wind_gust.X());
+  force->set_y(wind.Y() + wind_gust.Y());
+  force->set_z(wind.Z() + wind_gust.Z());
 
   wind_msg.set_frame_id(frame_id_);
-  Set(wind_msg.mutable_stamp(), now);
+  wind_msg.set_usec(now.Double() * 1e6);
   wind_msg.set_allocated_force(force);
 
   wind_pub_->Publish(wind_msg);

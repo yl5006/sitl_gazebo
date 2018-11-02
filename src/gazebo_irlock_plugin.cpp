@@ -51,6 +51,8 @@ void IRLockPlugin::Load(sensors::SensorPtr _sensor, sdf::ElementPtr _sdf)
   if (!_sensor)
     gzerr << "Invalid sensor pointer.\n";
 
+  this->world = physics::get_world(_sensor->WorldName());
+
   this->camera = std::dynamic_pointer_cast<sensors::LogicalCameraSensor>(_sensor);
 
   if (!this->camera) {
@@ -82,6 +84,13 @@ void IRLockPlugin::Load(sensors::SensorPtr _sensor, sdf::ElementPtr _sdf)
 
 void IRLockPlugin::OnUpdated()
 {
+  // Get the current simulation time.
+#if GAZEBO_MAJOR_VERSION >= 9
+  common::Time now = world->SimTime();
+#else
+  common::Time now = world->GetSimTime();
+#endif
+
   gazebo::msgs::LogicalCameraImage img = this->camera->Image();
 
   for (int idx = 0; idx < img.model_size(); idx++) {
@@ -103,7 +112,7 @@ void IRLockPlugin::OnUpdated()
         ignition::math::Vector3d meas(-pos.Y()/pos.X(), -pos.Z()/pos.X(), 1.0);
 
         // prepare irlock message
-        irlock_message.set_time_usec(0); // will be filled in simulator_mavlink.cpp
+        irlock_message.set_time_usec(now.Double() * 1e6);
         irlock_message.set_signature(idx); // unused by beacon estimator
         irlock_message.set_pos_x(meas.X());
         irlock_message.set_pos_y(meas.Y());

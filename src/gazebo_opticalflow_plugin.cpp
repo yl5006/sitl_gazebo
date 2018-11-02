@@ -55,21 +55,12 @@ void OpticalFlowPlugin::Load(sensors::SensorPtr _sensor, sdf::ElementPtr _sdf)
   if (!_sensor)
     gzerr << "Invalid sensor pointer.\n";
 
-  this->parentSensor =
-#if GAZEBO_MAJOR_VERSION >= 7
-    std::dynamic_pointer_cast<sensors::CameraSensor>(_sensor);
-#else
-    boost::dynamic_pointer_cast<sensors::CameraSensor>(_sensor);
-#endif
+  this->parentSensor = std::dynamic_pointer_cast<sensors::CameraSensor>(_sensor);
 
   if (!this->parentSensor)
   {
     gzerr << "OpticalFlowPlugin requires a CameraSensor.\n";
-#if GAZEBO_MAJOR_VERSION >= 7
     if (std::dynamic_pointer_cast<sensors::DepthCameraSensor>(_sensor))
-#else
-    if (boost::dynamic_pointer_cast<sensors::DepthCameraSensor>(_sensor))
-#endif
       gzmsg << "It is a depth camera sensor\n";
   }
 
@@ -79,8 +70,10 @@ void OpticalFlowPlugin::Load(sensors::SensorPtr _sensor, sdf::ElementPtr _sdf)
     return;
   }
 
+  this->world = physics::get_world(this->parentSensor->WorldName());
+
 #if GAZEBO_MAJOR_VERSION >= 7
-this->camera = this->parentSensor->Camera();
+  this->camera = this->parentSensor->Camera();
   this->width = this->camera->ImageWidth();
   this->height = this->camera->ImageHeight();
   this->depth = this->camera->ImageDepth();
@@ -117,8 +110,24 @@ this->camera = this->parentSensor->Camera();
     gzwarn << "[gazebo_optical_flow_plugin] Using default output rate " << output_rate_ << ".";
   }
 
+  if(_sdf->HasElement("hasGyro"))
+    has_gyro_ = _sdf->GetElement("hasGyro")->Get<bool>();
+  else
+    has_gyro_ = HAS_GYRO;
+
   node_handle_ = transport::NodePtr(new transport::Node());
   node_handle_->Init(namespace_);
+
+  if(has_gyro_) {
+    if(_sdf->HasElement("hasGyro"))
+      gyro_sub_topic_ = _sdf->GetElement("gyroTopic")->Get<std::string>();
+    else
+      gyro_sub_topic_ = kDefaultGyroTopic;
+
+    string topicName = "~/" + _sensor->ParentName() + gyro_sub_topic_;
+    boost::replace_all(topicName, "::", "/");
+    imuSub_ = node_handle_->Subscribe(topicName, &OpticalFlowPlugin::ImuCallback, this);
+  }
 
   string topicName = "~/" + scopedName + "/opticalFlow";
   boost::replace_all(topicName, "::", "/");
@@ -133,7 +142,6 @@ this->camera = this->parentSensor->Camera();
   //init flow
   optical_flow_ = new OpticalFlowOpenCV(focal_length_, focal_length_, output_rate_);
   // _optical_flow = new OpticalFlowPX4(focal_length_, focal_length_, output_rate_, this->width);
-
 }
 
 /////////////////////////////////////////////////
@@ -164,14 +172,30 @@ void OpticalFlowPlugin::OnNewFrame(const unsigned char * _image,
 
   if (quality >= 0) { // calcFlow(...) returns -1 if data should not be published yet -> output_rate
     //prepare optical flow message
-    opticalFlow_message.set_time_usec(0);//will be filled in simulator_mavlink.cpp
+    // Get the current simulation time.
+    #if GAZEBO_MAJOR_VERSION >= 9
+      common::Time now = world->SimTime();
+    #else
+      common::Time now = world->GetSimTime();
+    #endif
+
+    opticalFlow_message.set_time_usec(now.Double() * 1e6);
     opticalFlow_message.set_sensor_id(2.0);
     opticalFlow_message.set_integration_time_us(quality ? dt_us_ : 0);
     opticalFlow_message.set_integrated_x(quality ? flow_x_ang : 0.0f);
     opticalFlow_message.set_integrated_y(quality ? flow_y_ang : 0.0f);
-    opticalFlow_message.set_integrated_xgyro(0.0f); //get real values in gazebo_mavlink_interface.cpp
-    opticalFlow_message.set_integrated_ygyro(0.0f); //get real values in gazebo_mavlink_interface.cpp
-    opticalFlow_message.set_integrated_zgyro(0.0f); //get real values in gazebo_mavlink_interface.cpp
+    if(has_gyro_) {
+      opticalFlow_message.set_integrated_xgyro(opticalFlow_rate.X());
+      opticalFlow_message.set_integrated_ygyro(opticalFlow_rate.Y());
+      opticalFlow_message.set_integrated_zgyro(opticalFlow_rate.Z());
+      //reset gyro integral
+      opticalFlow_rate.Set();
+    } else {
+      //no gyro
+      opticalFlow_message.set_integrated_xgyro(NAN);
+      opticalFlow_message.set_integrated_ygyro(NAN);
+      opticalFlow_message.set_integrated_zgyro(NAN);
+    }
     opticalFlow_message.set_temperature(20.0f);
     opticalFlow_message.set_quality(quality);
     opticalFlow_message.set_time_delta_distance_us(0);
@@ -182,4 +206,25 @@ void OpticalFlowPlugin::OnNewFrame(const unsigned char * _image,
   }
 }
 
+void OpticalFlowPlugin::ImuCallback(ConstIMUPtr& _imu) {
+  //accumulate gyro measurements that are needed for the optical flow message
+  #if GAZEBO_MAJOR_VERSION >= 9
+    common::Time now = world->SimTime();
+  #else
+    common::Time now = world->GetSimTime();
+  #endif
+
+  uint32_t now_us = now.Double() * 1e6;
+  ignition::math::Vector3d px4flow_gyro = ignition::math::Vector3d(_imu->angular_velocity().x(),
+                                                                   _imu->angular_velocity().y(),
+                                                                   _imu->angular_velocity().z());
+
+  static uint32_t last_dt_us = now_us;
+  uint32_t dt_us = now_us - last_dt_us;
+
+  if (dt_us > 1000) {
+    opticalFlow_rate += px4flow_gyro * (dt_us / 1000000.0f);
+    last_dt_us = now_us;
+  }
+}
 /* vim: set et fenc=utf-8 ff=unix sts=0 sw=2 ts=2 : */
